@@ -1,0 +1,411 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: #1d2939;
+  background: #f4f6f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  width: min(100%, 520px);
+  min-height: 100vh;
+  margin: 0 auto;
+  background: #fff;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.state {
+  padding: 40px 24px;
+  color: #667085;
+}
+
+.bind-view {
+  min-height: 100vh;
+  padding: 56px 24px 24px;
+}
+
+.brand {
+  color: #9b6b2f;
+  font-weight: 700;
+  margin-bottom: 28px;
+}
+
+.bind-view h1 {
+  margin: 0 0 10px;
+  font-size: 28px;
+}
+
+.bind-view p {
+  margin: 0 0 28px;
+  color: #667085;
+  line-height: 1.6;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: #475467;
+  font-size: 14px;
+}
+
+input {
+  width: 100%;
+  height: 46px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 0 12px;
+  outline: none;
+}
+
+input:focus {
+  border-color: #9b6b2f;
+  box-shadow: 0 0 0 3px rgba(155, 107, 47, .12);
+}
+
+button {
+  height: 44px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 16px;
+  color: #fff;
+  background: #1f2937;
+}
+
+form button {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.message {
+  min-height: 24px;
+  margin-top: 14px;
+  color: #b42318;
+  font-size: 14px;
+}
+
+.profile-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 28px 20px 24px;
+  color: #fff;
+  background: linear-gradient(135deg, #202936 0%, #5f4526 100%);
+}
+
+.eyebrow {
+  margin-bottom: 10px;
+  color: rgba(255,255,255,.72);
+  font-size: 13px;
+}
+
+.profile-head h1 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.profile-head p {
+  margin: 10px 0 0;
+  color: rgba(255,255,255,.78);
+}
+
+.avatar {
+  flex: 0 0 58px;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #1f2937;
+  background: #fff;
+  font-weight: 700;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: #eaecf0;
+}
+
+.metrics article {
+  padding: 18px 20px;
+  background: #fff;
+}
+
+.metrics span {
+  display: block;
+  color: #667085;
+  font-size: 13px;
+}
+
+.metrics strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 24px;
+}
+
+.coupon-section {
+  padding: 20px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  gap: 12px;
+}
+
+.section-title h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.section-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.section-title button {
+  height: 34px;
+  color: #344054;
+  background: #eef2f6;
+}
+
+.section-title button.ghost {
+  color: #9b2c2c;
+  background: #fff1f1;
+}
+
+.coupon-list {
+  display: grid;
+  gap: 12px;
+}
+
+.coupon {
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.coupon-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 700;
+}
+
+.tag {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #344054;
+  background: #eef2f6;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tag.unused {
+  color: #027a48;
+  background: #ecfdf3;
+}
+
+.tag.used {
+  color: #175cd3;
+  background: #eff4ff;
+}
+
+.tag.expired,
+.tag.voided {
+  color: #b42318;
+  background: #fef3f2;
+}
+
+.coupon-meta {
+  margin-top: 10px;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.empty {
+  padding: 28px 18px;
+  border: 1px dashed #d0d5dd;
+  border-radius: 8px;
+  color: #667085;
+  text-align: center;
+}
+
+.coupon {
+  cursor: pointer;
+}
+
+.detail-view {
+  min-height: 100vh;
+  background: #f4f6f8;
+}
+
+.detail-nav {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  height: 52px;
+  background: #fff;
+  border-bottom: 1px solid #eaecf0;
+  text-align: center;
+}
+
+.detail-nav button {
+  width: 44px;
+  height: 44px;
+  color: #1d2939;
+  background: transparent;
+  font-size: 30px;
+}
+
+.coupon-detail-card,
+.detail-panel {
+  margin: 12px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.coupon-detail-card {
+  padding: 20px 16px 18px;
+}
+
+.coupon-detail-top {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed #d0d5dd;
+}
+
+.detail-status {
+  color: #a86b24;
+  font-size: 30px;
+  font-weight: 800;
+}
+
+.detail-discount {
+  margin-top: 4px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.coupon-detail-top h1 {
+  margin: 2px 0 8px;
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.coupon-detail-top p {
+  margin: 0;
+  color: #667085;
+  font-size: 13px;
+}
+
+.code-title {
+  margin-top: 18px;
+  color: #344054;
+  font-weight: 700;
+}
+
+.qr-code {
+  width: 168px;
+  height: 168px;
+  margin: 18px auto 14px;
+  background:
+    linear-gradient(90deg, #111 10px, transparent 10px) 0 0 / 28px 28px,
+    linear-gradient(#111 10px, transparent 10px) 0 0 / 28px 28px,
+    #fff;
+  border: 12px solid #fff;
+  box-shadow: inset 0 0 0 10px #111, inset 22px 22px 0 0 #fff, inset -22px -22px 0 0 #fff;
+}
+
+.bar-code {
+  width: 230px;
+  height: 58px;
+  margin: 0 auto 8px;
+  background: repeating-linear-gradient(90deg, #111 0 2px, transparent 2px 5px, #111 5px 8px, transparent 8px 13px);
+}
+
+.detail-code {
+  color: #98a2b3;
+  text-align: center;
+  font-size: 13px;
+}
+
+.detail-panel {
+  padding: 16px;
+}
+
+.detail-panel h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+
+.detail-panel button {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 12px 0;
+  color: #1d2939;
+  background: transparent;
+  border-bottom: 1px solid #f2f4f7;
+  text-align: left;
+}
+
+.detail-panel button span {
+  color: #1d2939;
+  white-space: nowrap;
+  line-height: 1.55;
+}
+
+.detail-panel button:last-child {
+  border-bottom: 0;
+}
+
+.detail-panel button strong {
+  min-width: 0;
+  color: #98a2b3;
+  font-weight: 500;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+#detailStoreScope {
+  text-align: left;
+  word-break: break-word;
+}
+
+.detail-panel ol {
+  margin: 0;
+  padding-left: 20px;
+  color: #667085;
+  line-height: 1.8;
+  font-size: 14px;
+}

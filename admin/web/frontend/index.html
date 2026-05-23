@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>积分商城后台</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <section id="loginView" class="login-view hidden">
+    <form class="login-panel" onsubmit="login(event)">
+      <h1>积分商城后台</h1>
+      <label>用户名<input id="loginUsername" autocomplete="username" value="admin" /></label>
+      <label>密码<input id="loginPassword" type="password" autocomplete="current-password" /></label>
+      <button type="submit">登录</button>
+      <p id="loginMessage" class="message"></p>
+    </form>
+  </section>
+
+  <div id="appView" class="hidden">
+  <header class="topbar">
+    <h1>积分商城后台</h1>
+    <div class="operator">
+      <div class="identity">
+        <div>目前登录人员：<strong id="currentUser">-</strong></div>
+        <div>所属门店：<strong id="currentStore">-</strong></div>
+      </div>
+      <input id="operator" type="hidden" value="员工" />
+      <button class="secondary" onclick="logout()">退出</button>
+    </div>
+  </header>
+  <main class="layout">
+    <nav class="sidebar">
+      <button class="active" data-view="customers">客户管理</button>
+      <button data-view="new-customer">新增客户</button>
+      <button data-view="stores">门店维护</button>
+      <button data-view="issue">发券</button>
+      <button data-view="redeem">核销</button>
+      <button data-view="templates">券模板</button>
+      <button data-view="logs">操作记录</button>
+    </nav>
+    <section class="content">
+      <div class="stats" id="stats"></div>
+
+      <section id="view-customers" class="view">
+        <div class="panel" id="customerListPanel">
+          <div class="panel-head">
+            <div class="panel-title">客户查询</div>
+            <div class="toolbar">
+              <input id="search" placeholder="手机号 / wid / 昵称 / 车牌号 / 车架号 / 车主姓名" />
+              <button onclick="searchCustomers()">查询</button>
+              <button class="secondary" onclick="resetCustomerFilters()">重置</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="filter-grid">
+              <label>成为客户开始<input id="becameFrom" type="date" /></label>
+              <label>成为客户结束<input id="becameTo" type="date" /></label>
+              <label>归属门店<select id="storeFilter"></select></label>
+              <label>入会开始<input id="joinedFrom" type="date" /></label>
+              <label>入会结束<input id="joinedTo" type="date" /></label>
+              <label>每页数量<select id="pageSize"><option>20</option><option selected>50</option><option>100</option><option>200</option></select></label>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>wid</th><th>手机号</th><th>昵称</th><th>归属门店</th><th>成为客户时间</th><th>入会时间</th><th>等级</th><th>可用积分</th><th>可用券</th></tr></thead>
+                <tbody id="customerRows"></tbody>
+              </table>
+            </div>
+            <div class="pager">
+              <button class="secondary" id="prevPage" onclick="changeCustomerPage(-1)">上一页</button>
+              <span id="pageInfo">第 1 页</span>
+              <button class="secondary" id="nextPage" onclick="changeCustomerPage(1)">下一页</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="customerDetailPanel" class="hidden">
+          <div class="panel">
+            <div class="panel-head">
+              <div class="panel-title">用户详情</div>
+              <button class="secondary" onclick="backToCustomerList()">返回列表</button>
+            </div>
+            <div class="panel-body" id="customerDetail">请选择客户</div>
+          </div>
+        <div class="coupon-workspace">
+          <div class="panel coupon-detail-panel">
+            <div class="panel-head"><div class="panel-title">&#21048;&#35814;&#24773;</div></div>
+            <div class="panel-body" id="couponDetail">&#36873;&#25321;&#19968;&#20010;&#21048;&#26597;&#30475;&#35814;&#24773;</div>
+          </div>
+          <div class="panel coupon-overview-panel">
+            <div class="panel-head">
+              <div class="panel-title">&#23458;&#25143;&#21048;&#24635;&#35272;</div>
+              <div class="toolbar compact">
+                <select id="couponStatusFilter" onchange="renderCustomerCoupons()">
+                  <option value="">&#20840;&#37096;&#29366;&#24577;</option>
+                  <option value="unused">&#26410;&#20351;&#29992;</option>
+                  <option value="used">&#24050;&#20351;&#29992;</option>
+                  <option value="expired">&#24050;&#36807;&#26399;</option>
+                  <option value="voided">&#24050;&#20316;&#24223;</option>
+                </select>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="subtle" id="couponFilterInfo">-</div>
+              <div class="table-wrap coupon-scroll">
+              <table>
+                <thead><tr><th>&#21048;&#30721;</th><th>&#21517;&#31216;</th><th>&#29366;&#24577;</th><th>&#39046;&#21462;&#26102;&#38388;</th><th>&#20351;&#29992;&#26102;&#38388;</th><th>&#26377;&#25928;&#26399;</th></tr></thead>
+                <tbody id="customerCoupons"></tbody>
+              </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+      </section>
+
+      <section id="view-stores" class="view hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">门店总表维护</div>
+            <button class="secondary" onclick="loadStores()">刷新</button>
+          </div>
+          <div class="panel-body">
+            <div class="store-maintenance-form">
+              <input id="newStoreName" placeholder="门店名称" />
+              <button onclick="createStore()">新增门店</button>
+            </div>
+            <p id="storeMessage" class="message"></p>
+            <div class="table-wrap store-maintenance-table">
+              <table>
+                <thead><tr><th>门店</th><th>客户数</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody id="storeRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-new-customer" class="view hidden">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">新增本地客户</div></div>
+          <div class="panel-body">
+            <div class="form-grid">
+              <label>手机号<input id="newCustomerPhone" placeholder="必填" /></label>
+              <label>昵称<input id="newCustomerNickname" placeholder="可选" /></label>
+              <label>归属门店<select id="newCustomerStore"></select></label>
+              <label>会员等级<input id="newCustomerLevel" placeholder="普通会员" /></label>
+              <label>性别<input id="newCustomerGender" placeholder="可选" /></label>
+              <label>生日<input id="newCustomerBirthday" type="date" /></label>
+              <label>姓名<input id="newCustomerRealName" placeholder="车主姓名" /></label>
+              <label>车型车系<input id="newCustomerCarSeries" placeholder="例如 比亚迪王朝网" /></label>
+              <label>车架号<input id="newCustomerVin" placeholder="17 位 VIN，可选" /></label>
+              <label>购买门店<input id="newCustomerPurchaseStore" placeholder="购车门店，可选" /></label>
+              <label>车牌号<input id="newCustomerPlateNo" placeholder="可选" /></label>
+              <label class="wide">备注<input id="newCustomerRemark" placeholder="本地新增说明" /></label>
+            </div>
+            <div id="newCustomerCargeerResults" class="lookup-results hidden"></div>
+            <div class="actions"><button onclick="createCustomer()">新增客户</button></div>
+            <p id="newCustomerMessage" class="message"></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-issue" class="view hidden">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">给客户发券</div></div>
+          <div class="panel-body">
+            <div class="form-grid">
+              <label>客户手机号<input id="issuePhone" placeholder="输入手机号搜索" /></label>
+              <label>客户 wid<input id="issueWid" placeholder="自动填充" readonly /></label>
+              <label>昵称<input id="issueNickname" placeholder="自动填充" readonly /></label>
+              <label>客户归属门店<input id="issueStore" placeholder="自动填充" readonly /></label>
+              <label>等级<input id="issueLevel" placeholder="自动填充" readonly /></label>
+              <label>券模板<select id="issueTemplate"></select></label>
+              <label>数量<input id="issueQuantity" type="number" min="1" max="100" value="1" /></label>
+              <label>有效天数<input id="issueDays" type="number" min="1" value="30" /></label>
+              <label>使用门店范围<select id="issueUsableStoreScope" onchange="syncIssueStoreScope()"><option value="all">全部门店</option><option value="current">当前登录人员所属门店</option><option value="customer_store">客户归属门店</option><option value="selected">指定门店</option></select></label>
+              <div class="store-picker wide">
+                <div class="store-picker-title">指定使用门店</div>
+                <div class="store-picker-grid">
+                  <div>
+                    <div class="store-picker-label">可选门店</div>
+                    <div id="issueAvailableStores" class="store-picker-list disabled"></div>
+                  </div>
+                  <div>
+                    <div class="store-picker-label">已选门店</div>
+                    <div id="issueSelectedStores" class="store-picker-list disabled"></div>
+                  </div>
+                </div>
+              </div>
+              <label class="wide">备注<input id="issueRemark" placeholder="备注" /></label>
+            </div>
+            <div id="issueCustomerResults" class="lookup-results hidden"></div>
+            <div class="actions"><button onclick="issueCoupon()">发券</button></div>
+            <p id="issueMessage" class="message"></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-redeem" class="view hidden">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">核销券</div></div>
+          <div class="panel-body">
+            <div class="form-grid">
+              <label>券码<input id="redeemCode" placeholder="输入券码" /></label>
+              <label class="wide">备注<input id="redeemRemark" placeholder="备注" /></label>
+            </div>
+            <div class="actions"><button class="danger" onclick="redeemCoupon()">确认核销</button></div>
+            <p id="redeemMessage" class="message"></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-templates" class="view hidden">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">新增券模板</div></div>
+          <div class="panel-body">
+            <div class="form-grid">
+              <label>模板名称<input id="newTemplateName" placeholder="必填" /></label>
+              <label>券类型<input id="newTemplateType" placeholder="通用券" /></label>
+              <label class="wide">使用规则<input id="newTemplateRule" placeholder="规则说明" /></label>
+            </div>
+            <div class="actions"><button onclick="createTemplate()">新增模板</button></div>
+            <p id="newTemplateMessage" class="message"></p>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">券模板</div></div>
+          <div class="panel-body table-wrap">
+            <table><thead><tr><th>模板ID</th><th>名称</th><th>类型</th><th>规则</th></tr></thead><tbody id="templateRows"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-logs" class="view hidden">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">操作记录</div><button class="secondary" onclick="loadLogs()">刷新</button></div>
+          <div class="panel-body table-wrap">
+            <table><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>wid</th><th>对象</th><th>数量</th><th>备注</th></tr></thead><tbody id="logRows"></tbody></table>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+  </div>
+  <div id="couponContextMenu" class="context-menu hidden">
+    <button type="button" onclick="confirmContextCouponRedeem()">核销</button>
+    <button type="button" class="danger" onclick="confirmContextCouponVoid()">作废</button>
+  </div>
+  <script src="/assets/app.js?v=20260523-stores-page"></script>
+</body>
+</html>

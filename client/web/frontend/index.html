@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>个人中心</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260522-client-detail-layout" />
+</head>
+<body>
+  <main class="shell">
+    <section id="loadingView" class="state">加载中...</section>
+
+    <section id="bindView" class="bind-view hidden">
+      <div class="brand">天选好车主</div>
+      <h1>绑定手机号</h1>
+      <p>首次进入个人中心需要验证手机号，之后会自动登录。</p>
+      <form onsubmit="bindPhone(event)">
+        <label>手机号<input id="phoneInput" inputmode="tel" autocomplete="tel" placeholder="请输入手机号" /></label>
+        <label>验证码<input id="codeInput" inputmode="numeric" autocomplete="one-time-code" placeholder="开发阶段填 000000" /></label>
+        <button type="submit">进入个人中心</button>
+      </form>
+      <div id="bindMessage" class="message"></div>
+    </section>
+
+    <section id="profileView" class="hidden">
+      <header class="profile-head">
+        <div>
+          <div class="eyebrow">个人中心</div>
+          <h1 id="nickname">车主</h1>
+          <p id="memberLine">会员信息加载中</p>
+        </div>
+        <div class="avatar" id="avatar">车</div>
+      </header>
+
+      <section class="metrics">
+        <article>
+          <span>可用积分</span>
+          <strong id="availablePoint">0</strong>
+        </article>
+        <article>
+          <span>累计积分</span>
+          <strong id="totalPoint">0</strong>
+        </article>
+      </section>
+
+      <section class="coupon-section">
+        <div class="section-title">
+          <h2>我的优惠券</h2>
+          <div class="section-actions">
+            <button type="button" onclick="loadData()">刷新</button>
+            <button type="button" class="ghost" onclick="logout()">退出</button>
+          </div>
+        </div>
+        <div id="couponList" class="coupon-list"></div>
+      </section>
+    </section>
+
+    <section id="couponDetailView" class="detail-view hidden">
+      <header class="detail-nav">
+        <button type="button" onclick="backToProfile()">‹</button>
+        <strong>优惠券详情</strong>
+        <span></span>
+      </header>
+      <section class="coupon-detail-card">
+        <div class="coupon-detail-top">
+          <div>
+            <div id="detailStatus" class="detail-status">兑换</div>
+            <div id="detailDiscount" class="detail-discount">无使用门槛</div>
+          </div>
+          <div>
+            <h1 id="detailName">优惠券</h1>
+            <p id="detailPeriod">-</p>
+          </div>
+        </div>
+        <div class="code-title">券码</div>
+        <div id="qrCode" class="qr-code"></div>
+        <div id="barCode" class="bar-code"></div>
+        <div id="detailCode" class="detail-code">-</div>
+      </section>
+
+      <section class="detail-panel">
+        <h2>适用范围</h2>
+        <button type="button">
+          <span>可用门店</span>
+          <strong id="detailStoreScope">-</strong>
+        </button>
+        <button type="button">
+          <span>有效期</span>
+          <strong id="detailProductScope">-</strong>
+        </button>
+      </section>
+
+      <section class="detail-panel">
+        <h2>使用规则</h2>
+        <ol id="detailRules"></ol>
+      </section>
+    </section>
+  </main>
+  <script src="/assets/app.js?v=20260523-async-cargeer"></script>
+</body>
+</html>
