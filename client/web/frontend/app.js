@@ -120,7 +120,9 @@ async function loadData(showLoading = true) {
     $("totalPoint").textContent = safe(customer.total_point || "0");
     $("avatar").textContent = String(customer.nickname || customer.phone || "车").slice(0, 1);
     renderCoupons(coupons.items || []);
-    if (showLoading || $("profileView").classList.contains("hidden")) show("profileView");
+    if (showLoading || ($("couponDetailView").classList.contains("hidden") && $("profileView").classList.contains("hidden"))) {
+      show("profileView");
+    }
   } catch (error) {
     show("bindView");
   }
