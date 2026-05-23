@@ -1,6 +1,54 @@
-﻿version: "3.9"
 services:
   admin:
-    image: placeholder
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.admin
+    container_name: points-mall-v3-admin
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_PORT:-18082}:8000"
+    volumes:
+      - ../data:/data
+      - ${MALL_CRAWLER_V2_OUTPUT_DIR:-../crawler_v2_output}:/crawler_v2_output:ro
+    environment:
+      MALL_ENV: production
+      MALL_DATA_DIR: /data
+      MALL_DB_PATH: /data/mall.db
+      MALL_AUTO_IMPORT: "${MALL_AUTO_IMPORT:-0}"
+      MALL_CRAWLER_V2_OUTPUT_DIR: /crawler_v2_output
+      MALL_SESSION_SECRET: "${MALL_SESSION_SECRET:-change-this-session-secret}"
+      MALL_COOKIE_SECURE: "${MALL_COOKIE_SECURE:-0}"
+      CARGEER_ENABLED: "${CARGEER_ENABLED:-0}"
+      CARGEER_ACCOUNT: "${CARGEER_ACCOUNT:-}"
+      CARGEER_USERNAME: "${CARGEER_USERNAME:-}"
+      CARGEER_PASSWORD: "${CARGEER_PASSWORD:-}"
+      CARGEER_CAPTCHA_TOKEN: "${CARGEER_CAPTCHA_TOKEN:-}"
+      JFBYM_TOKEN: "${JFBYM_TOKEN:-}"
+      CARGEER_TIMEOUT: "${CARGEER_TIMEOUT:-15}"
+
   client:
-    image: placeholder
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.client
+    container_name: points-mall-v3-client
+    restart: unless-stopped
+    ports:
+      - "${CLIENT_PORT:-18083}:8010"
+    volumes:
+      - ../data:/data
+    environment:
+      CLIENT_ENV: production
+      CLIENT_DB_PATH: /data/mall.db
+      CLIENT_SESSION_COOKIE_NAME: "${CLIENT_SESSION_COOKIE_NAME:-tx_client_session_v3}"
+      WECHAT_APPID: "${WECHAT_APPID:-}"
+      WECHAT_APPSECRET: "${WECHAT_APPSECRET:-}"
+      WECHAT_OAUTH_REDIRECT_URI: "${WECHAT_OAUTH_REDIRECT_URI:-}"
+      CARGEER_ENABLED: "${CARGEER_ENABLED:-0}"
+      CARGEER_ACCOUNT: "${CARGEER_ACCOUNT:-}"
+      CARGEER_USERNAME: "${CARGEER_USERNAME:-}"
+      CARGEER_PASSWORD: "${CARGEER_PASSWORD:-}"
+      CARGEER_CAPTCHA_TOKEN: "${CARGEER_CAPTCHA_TOKEN:-}"
+      JFBYM_TOKEN: "${JFBYM_TOKEN:-}"
+      CARGEER_TIMEOUT: "${CARGEER_TIMEOUT:-15}"
+    depends_on:
+      - admin

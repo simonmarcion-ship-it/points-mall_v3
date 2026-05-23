@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+__pycache__/
+*.pyc
+*.db
+*.sqlite
+*.sqlite3
+admin/web/data/
+client/web/data/
+data/
+node_modules/
