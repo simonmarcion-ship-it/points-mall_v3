@@ -41,6 +41,7 @@ class IssueCouponRequest(BaseModel):
     wid: str
     template_id: str
     quantity: int = 1
+    validity_type: str = "days"
     valid_days: int = 30
     operator: str = "员工"
     remark: str = ""
@@ -991,7 +992,10 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
     username = require_login(request)
     if req.quantity < 1 or req.quantity > 100:
         raise HTTPException(status_code=400, detail="发券数量必须在 1-100 之间")
-    if req.valid_days < 1 or req.valid_days > 3650:
+    validity_type = (req.validity_type or "days").strip()
+    if validity_type not in {"days", "unlimited"}:
+        raise HTTPException(status_code=400, detail="有效期类型不正确")
+    if validity_type == "days" and (req.valid_days < 1 or req.valid_days > 3650):
         raise HTTPException(status_code=400, detail="有效天数必须在 1-3650 之间")
 
     with db_session() as conn:
@@ -1000,7 +1004,12 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
         template = require_template(conn, req.template_id)
         start = datetime.now()
         issued_at = now_text()
-        end = start + timedelta(days=req.valid_days)
+        if validity_type == "unlimited":
+            end = datetime(2099, 1, 1)
+            valid_period = "永久有效"
+        else:
+            end = start + timedelta(days=req.valid_days)
+            valid_period = f"{start:%Y-%m-%d} 至 {end:%Y-%m-%d}"
         issued = []
         usable_store_scope = req.usable_store_scope.strip() or "all"
         if usable_store_scope == "current":
@@ -1031,7 +1040,7 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
                 "status_text": "未使用",
                 "receive_time": now_text(),
                 "used_time": None,
-                "valid_period": f"{start:%Y-%m-%d} 至 {end:%Y-%m-%d}",
+                "valid_period": valid_period,
                 "valid_start": start.isoformat(),
                 "valid_end": end.isoformat(),
                 "phone": customer.get("phone"),

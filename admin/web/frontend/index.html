@@ -202,6 +202,7 @@
               <label>等级<input id="issueLevel" placeholder="自动填充" readonly /></label>
               <label>券模板<select id="issueTemplate"></select></label>
               <label>数量<input id="issueQuantity" type="number" min="1" max="100" value="1" /></label>
+              <label>有效期<select id="issueValidityType" onchange="syncIssueValidityType()"><option value="days">按天数</option><option value="unlimited">无限制（2099年1月1日）</option></select></label>
               <label>有效天数<input id="issueDays" type="number" min="1" value="30" /></label>
               <label>使用门店范围<select id="issueUsableStoreScope" onchange="syncIssueStoreScope()"><option value="all">全部门店</option><option value="current">当前登录人员所属门店</option><option value="customer_store">客户归属门店</option><option value="selected">指定门店</option></select></label>
               <div class="store-picker wide">
@@ -276,6 +277,6 @@
     <button type="button" onclick="confirmContextCouponRedeem()">核销</button>
     <button type="button" class="danger" onclick="confirmContextCouponVoid()">作废</button>
   </div>
-  <script src="/assets/app.js?v=20260525-admin-register"></script>
+  <script src="/assets/app.js?v=20260525-validity-type"></script>
 </body>
 </html>

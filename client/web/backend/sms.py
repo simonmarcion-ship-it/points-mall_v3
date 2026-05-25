@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import json
+import logging
 import os
 import re
 import secrets
@@ -17,6 +18,7 @@ from .config import (
 
 
 PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
+logger = logging.getLogger(__name__)
 PROXY_ENV_KEYS = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -109,7 +111,23 @@ def send_sms_code(phone: str) -> None:
     body = getattr(response, "body", None)
     response_code = getattr(body, "code", None)
     if str(response_code).upper() != "OK":
+        logger.warning(
+            "Aliyun SMS send failed phone_suffix=%s code=%s message=%s template=%s sign=%s",
+            phone[-4:],
+            response_code,
+            getattr(body, "message", None),
+            ALIYUN_SMS_TEMPLATE_CODE,
+            ALIYUN_SMS_SIGN_NAME,
+        )
         raise SmsError(getattr(body, "message", None) or "短信发送失败")
+    logger.info(
+        "Aliyun SMS send accepted phone_suffix=%s biz_id=%s request_id=%s template=%s sign=%s",
+        phone[-4:],
+        getattr(body, "biz_id", None),
+        getattr(body, "request_id", None),
+        ALIYUN_SMS_TEMPLATE_CODE,
+        ALIYUN_SMS_SIGN_NAME,
+    )
 
     now = datetime.now()
     _SMS_CODES[phone] = (code, now + timedelta(minutes=5), 0, now)

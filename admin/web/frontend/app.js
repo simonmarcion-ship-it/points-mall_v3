@@ -833,6 +833,15 @@ function syncIssueStoreScope() {
   renderIssueStorePicker();
 }
 
+function syncIssueValidityType() {
+  const unlimited = $('issueValidityType') && $('issueValidityType').value === 'unlimited';
+  if ($('issueDays')) {
+    $('issueDays').disabled = unlimited;
+  }
+}
+
+window.syncIssueValidityType = syncIssueValidityType;
+
 function selectedIssueUsableStoreNames() {
   return issueSelectedStores;
 }
@@ -919,6 +928,7 @@ async function issueCoupon() {
         wid: $('issueWid').value,
         template_id: $('issueTemplate').value,
         quantity: Number($('issueQuantity').value),
+        validity_type: $('issueValidityType').value,
         valid_days: Number($('issueDays').value),
         operator: $('operator').value,
         remark: $('issueRemark').value,
@@ -1012,6 +1022,7 @@ async function init() {
       lookupNewCustomerCargeer();
     }
   });
+  syncIssueValidityType();
   try {
     const data = await api('/api/auth/me');
     showApp(data.username, data.profile || {});
