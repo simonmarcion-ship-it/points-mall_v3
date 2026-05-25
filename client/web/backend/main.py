@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 import ast
 import json
 import secrets
+import urllib.error
+import urllib.request
 from urllib.parse import urlencode
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
@@ -11,7 +14,15 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .config import DB_PATH, SESSION_COOKIE_NAME, SMS_ENABLED, WEB_DIR, WECHAT_APPID, WECHAT_OAUTH_REDIRECT_URI
+from .config import (
+    DB_PATH,
+    SESSION_COOKIE_NAME,
+    SMS_ENABLED,
+    WEB_DIR,
+    WECHAT_APPID,
+    WECHAT_APPSECRET,
+    WECHAT_OAUTH_REDIRECT_URI,
+)
 from .cargeer import lookup_cargeer_by_phone
 from .database import db_session, row_to_dict, rows_to_dicts
 from .schema import create_client_schema
@@ -19,6 +30,7 @@ from .sms import SmsError, normalize_phone, send_sms_code, verify_sms_code
 
 
 FRONTEND_DIR = WEB_DIR / "frontend"
+PENDING_WECHAT_COOKIE = f"{SESSION_COOKIE_NAME}_wechat_pending"
 
 app = FastAPI(title="天选好车主服务号客户端 API")
 
@@ -109,6 +121,48 @@ def set_client_session(response: Response, wid: str) -> None:
 
 def clear_client_session(response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+
+
+def encode_cookie_json(data: dict) -> str:
+    raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def decode_cookie_json(value: str | None) -> dict:
+    if not value:
+        return {}
+    try:
+        raw = base64.urlsafe_b64decode(value.encode("ascii"))
+        parsed = json.loads(raw.decode("utf-8"))
+        return parsed if isinstance(parsed, dict) else {}
+    except (ValueError, json.JSONDecodeError):
+        return {}
+
+
+def set_pending_wechat(response: Response, identity: dict) -> None:
+    response.set_cookie(
+        PENDING_WECHAT_COOKIE,
+        encode_cookie_json(
+            {
+                "openid": identity.get("openid") or "",
+                "unionid": identity.get("unionid") or "",
+                "nickname": identity.get("nickname") or "",
+                "avatar_url": identity.get("headimgurl") or identity.get("avatar_url") or "",
+            }
+        ),
+        max_age=60 * 10,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+
+
+def get_pending_wechat(request: Request) -> dict:
+    return decode_cookie_json(request.cookies.get(PENDING_WECHAT_COOKIE))
+
+
+def clear_pending_wechat(response: Response) -> None:
+    response.delete_cookie(PENDING_WECHAT_COOKIE, path="/")
 
 
 def get_customer_by_wid(conn, wid: str) -> dict | None:
@@ -306,6 +360,133 @@ def enrich_customer_from_cargeer_task(wid: str, phone: str) -> None:
             mark_customer_cargeer_status(conn, wid, "not_found" if cargeer_status == "ok" else cargeer_status)
 
 
+def fetch_json_url(url: str) -> dict:
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=f"微信接口请求失败：{exc}") from exc
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="微信接口返回格式异常") from exc
+
+    if data.get("errcode"):
+        raise HTTPException(status_code=502, detail=f"微信授权失败：{data.get('errmsg') or data.get('errcode')}")
+    return data
+
+
+def fetch_wechat_identity(code: str) -> dict:
+    if not WECHAT_APPID or not WECHAT_APPSECRET:
+        raise HTTPException(status_code=400, detail="微信授权未配置")
+
+    token_query = urlencode(
+        {
+            "appid": WECHAT_APPID,
+            "secret": WECHAT_APPSECRET,
+            "code": code,
+            "grant_type": "authorization_code",
+        }
+    )
+    token = fetch_json_url(f"https://api.weixin.qq.com/sns/oauth2/access_token?{token_query}")
+    identity = {
+        "openid": token.get("openid") or "",
+        "unionid": token.get("unionid") or "",
+    }
+    access_token = token.get("access_token") or ""
+    openid = identity["openid"]
+    if access_token and openid:
+        user_query = urlencode(
+            {
+                "access_token": access_token,
+                "openid": openid,
+                "lang": "zh_CN",
+            }
+        )
+        with suppress_wechat_userinfo_error():
+            user = fetch_json_url(f"https://api.weixin.qq.com/sns/userinfo?{user_query}")
+            identity.update(
+                {
+                    "unionid": user.get("unionid") or identity["unionid"],
+                    "nickname": user.get("nickname") or "",
+                    "headimgurl": user.get("headimgurl") or "",
+                }
+            )
+    if not identity["openid"]:
+        raise HTTPException(status_code=502, detail="微信授权没有返回 openid")
+    return identity
+
+
+class suppress_wechat_userinfo_error:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return isinstance(exc, HTTPException)
+
+
+def get_wechat_binding(conn, identity: dict) -> dict | None:
+    openid = identity.get("openid") or ""
+    unionid = identity.get("unionid") or ""
+    if unionid:
+        row = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM wechat_bindings
+                WHERE unionid = ?
+                """,
+                (unionid,),
+            ).fetchone()
+        )
+        if row:
+            return row
+    if openid:
+        return row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM wechat_bindings
+                WHERE openid = ?
+                """,
+                (openid,),
+            ).fetchone()
+        )
+    return None
+
+
+def upsert_wechat_binding(conn, identity: dict, customer: dict, phone: str) -> None:
+    openid = identity.get("openid") or ""
+    if not openid:
+        return
+
+    conn.execute(
+        """
+        INSERT INTO wechat_bindings (
+            openid, unionid, customer_wid, phone, nickname, avatar_url, bound_at, last_login_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(openid) DO UPDATE SET
+            unionid = excluded.unionid,
+            customer_wid = excluded.customer_wid,
+            phone = excluded.phone,
+            nickname = excluded.nickname,
+            avatar_url = excluded.avatar_url,
+            last_login_at = excluded.last_login_at
+        """,
+        (
+            openid,
+            identity.get("unionid") or None,
+            customer["wid"],
+            phone,
+            identity.get("nickname") or customer.get("nickname") or "",
+            identity.get("avatar_url") or identity.get("headimgurl") or customer.get("avatar_url") or "",
+            now_text(),
+            now_text(),
+        ),
+    )
+
+
 @app.on_event("startup")
 def startup() -> None:
     with db_session() as conn:
@@ -313,10 +494,11 @@ def startup() -> None:
 
 
 @app.get("/api/client/config")
-def client_config() -> dict:
+def client_config(request: Request) -> dict:
     return {
         "database": str(DB_PATH),
-        "wechat_configured": bool(WECHAT_APPID),
+        "wechat_configured": bool(WECHAT_APPID and WECHAT_APPSECRET and WECHAT_OAUTH_REDIRECT_URI),
+        "wechat_pending": bool(get_pending_wechat(request).get("openid")),
         "sms_enabled": SMS_ENABLED,
         "mode": "development",
     }
@@ -324,7 +506,7 @@ def client_config() -> dict:
 
 @app.get("/api/client/wechat/start")
 def wechat_start() -> RedirectResponse:
-    if not WECHAT_APPID or not WECHAT_OAUTH_REDIRECT_URI:
+    if not WECHAT_APPID or not WECHAT_APPSECRET or not WECHAT_OAUTH_REDIRECT_URI:
         return RedirectResponse(url="/?dev=1")
 
     query = urlencode(
@@ -340,15 +522,30 @@ def wechat_start() -> RedirectResponse:
 
 
 @app.get("/api/client/wechat/callback")
-def wechat_callback(code: str = "", state: str = "") -> dict:
+def wechat_callback(code: str = "", state: str = "") -> RedirectResponse:
     if not code:
         raise HTTPException(status_code=400, detail="缺少微信授权 code")
-    return {
-        "status": "placeholder",
-        "message": "这里后续用 code 换取 openid/unionid，再查询或创建绑定关系。",
-        "code_received": bool(code),
-        "state": state,
-    }
+    identity = fetch_wechat_identity(code)
+    response = RedirectResponse(url="/")
+    with db_session() as conn:
+        binding = get_wechat_binding(conn, identity)
+        if binding:
+            customer = get_customer_by_wid(conn, binding["customer_wid"])
+            if customer:
+                conn.execute(
+                    """
+                    UPDATE wechat_bindings
+                    SET last_login_at = ?
+                    WHERE id = ?
+                    """,
+                    (now_text(), binding["id"]),
+                )
+                set_client_session(response, customer["wid"])
+                clear_pending_wechat(response)
+                return response
+
+    set_pending_wechat(response, identity)
+    return response
 
 
 @app.get("/api/client/me")
@@ -419,6 +616,7 @@ def client_coupon_detail(code: str, request: Request) -> dict:
 @app.post("/api/client/logout")
 def client_logout(response: Response) -> dict:
     clear_client_session(response)
+    clear_pending_wechat(response)
     return {"ok": True}
 
 
@@ -472,7 +670,12 @@ def bind_phone(req: BindPhoneRequest, response: Response) -> dict:
 
 
 @app.post("/api/client/bind-phone")
-def bind_phone_with_cargeer(req: BindPhoneRequest, response: Response, background_tasks: BackgroundTasks) -> dict:
+def bind_phone_with_cargeer(
+    req: BindPhoneRequest,
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+) -> dict:
     try:
         phone = normalize_phone(req.phone)
         if not verify_sms_code(phone, req.sms_code):
@@ -528,7 +731,12 @@ def bind_phone_with_cargeer(req: BindPhoneRequest, response: Response, backgroun
         if should_enrich:
             background_tasks.add_task(enrich_customer_from_cargeer_task, customer["wid"], phone)
 
+        pending_wechat = get_pending_wechat(request)
+        if pending_wechat.get("openid"):
+            upsert_wechat_binding(conn, pending_wechat, customer, phone)
+
         set_client_session(response, customer["wid"])
+        clear_pending_wechat(response)
         return {"customer": customer, "created": created, "cargeer_status": "queued" if should_enrich else "not_needed"}
 
 

@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 let profileRefreshTimer = null;
 let profileRefreshAttempts = 0;
 let smsCountdownTimer = null;
+let triedWechatOAuth = false;
 
 function show(view) {
   ["loadingView", "bindView", "profileView", "couponDetailView"].forEach((id) => {
@@ -125,7 +126,27 @@ async function loadData(showLoading = true) {
       show("profileView");
     }
   } catch (error) {
+    if (showLoading) {
+      await tryWechatOAuth();
+    }
     show("bindView");
+  }
+}
+
+async function tryWechatOAuth() {
+  if (triedWechatOAuth) return;
+  triedWechatOAuth = true;
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("dev") === "1") return;
+
+  try {
+    const config = await api("/api/client/config");
+    if (config.wechat_configured && !config.wechat_pending) {
+      window.location.href = "/api/client/wechat/start";
+    }
+  } catch (error) {
+    console.warn("wechat oauth check failed", error);
   }
 }
 
