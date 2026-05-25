@@ -108,6 +108,9 @@ function showLoginPanel() {
   if ($('registerPanel')) $('registerPanel').classList.add('hidden');
 }
 
+window.showRegisterPanel = showRegisterPanel;
+window.showLoginPanel = showLoginPanel;
+
 async function loadRegisterStores() {
   const data = await api('/api/auth/register-options');
   $('registerStore').innerHTML = (data.stores || [])
@@ -143,6 +146,8 @@ async function registerAdmin(event) {
     msg.textContent = err.message;
   }
 }
+
+window.registerAdmin = registerAdmin;
 
 function formatDateTime(value) {
   const text = safe(value);
