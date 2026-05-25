@@ -11,10 +11,11 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .config import DB_PATH, SESSION_COOKIE_NAME, WEB_DIR, WECHAT_APPID, WECHAT_OAUTH_REDIRECT_URI
+from .config import DB_PATH, SESSION_COOKIE_NAME, SMS_ENABLED, WEB_DIR, WECHAT_APPID, WECHAT_OAUTH_REDIRECT_URI
 from .cargeer import lookup_cargeer_by_phone
 from .database import db_session, row_to_dict, rows_to_dicts
 from .schema import create_client_schema
+from .sms import SmsError, normalize_phone, send_sms_code, verify_sms_code
 
 
 FRONTEND_DIR = WEB_DIR / "frontend"
@@ -26,6 +27,10 @@ class BindPhoneRequest(BaseModel):
     phone: str
     sms_code: str
     nickname: str = ""
+
+
+class SendSmsRequest(BaseModel):
+    phone: str
 
 
 def now_text() -> str:
@@ -312,6 +317,7 @@ def client_config() -> dict:
     return {
         "database": str(DB_PATH),
         "wechat_configured": bool(WECHAT_APPID),
+        "sms_enabled": SMS_ENABLED,
         "mode": "development",
     }
 
@@ -416,6 +422,18 @@ def client_logout(response: Response) -> dict:
     return {"ok": True}
 
 
+@app.post("/api/client/sms/send")
+def send_client_sms(req: SendSmsRequest) -> dict:
+    try:
+        phone = normalize_phone(req.phone)
+        send_sms_code(phone)
+    except SmsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"短信发送失败：{exc}") from exc
+    return {"ok": True}
+
+
 @app.post("/api/client/bind-phone-legacy")
 def bind_phone(req: BindPhoneRequest, response: Response) -> dict:
     phone = req.phone.strip()
@@ -455,13 +473,16 @@ def bind_phone(req: BindPhoneRequest, response: Response) -> dict:
 
 @app.post("/api/client/bind-phone")
 def bind_phone_with_cargeer(req: BindPhoneRequest, response: Response, background_tasks: BackgroundTasks) -> dict:
-    phone = req.phone.strip()
-    if not phone:
-        raise HTTPException(status_code=400, detail="请输入手机号")
-
-    # 本地骨架阶段允许 000000 作为测试验证码；正式环境需要接短信服务。
-    if req.sms_code.strip() != "000000":
-        raise HTTPException(status_code=400, detail="开发阶段验证码请填写 000000")
+    try:
+        phone = normalize_phone(req.phone)
+        if not verify_sms_code(phone, req.sms_code):
+            raise HTTPException(status_code=400, detail="验证码错误或已过期")
+    except SmsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"验证码校验失败：{exc}") from exc
 
     with db_session() as conn:
         customer = get_customer_by_phone(conn, phone)

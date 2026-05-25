@@ -20,6 +20,8 @@ def load_env_file(path: str) -> bool:
 
 
 if __name__ == "__main__":
+    load_env_file(str(Path(__file__).resolve().parents[2] / ".env"))
+    load_env_file(str(Path(__file__).resolve().parents[3] / ".env"))
     os.environ.setdefault("CLIENT_DB_PATH", r"D:\weimeng_customerinfo\web\data\mall.db")
     cargeer_env_file = os.environ.get(
         "CARGEER_ENV_FILE",

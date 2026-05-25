@@ -30,6 +30,7 @@ async function api(path, options = {}) {
 function showLogin() {
   $('loginView').classList.remove('hidden');
   $('appView').classList.add('hidden');
+  showLoginPanel();
 }
 
 function showApp(username, profile = {}) {
@@ -81,6 +82,66 @@ async function logout() {
 
 function safe(value) {
   return value === null || value === undefined || value === '' ? '-' : String(value);
+}
+
+function html(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function showRegisterPanel() {
+  document.querySelector('#loginView .login-panel').classList.add('hidden');
+  $('registerPanel').classList.remove('hidden');
+  $('registerMessage').textContent = '';
+  loadRegisterStores().catch((err) => {
+    $('registerMessage').className = 'message error';
+    $('registerMessage').textContent = err.message;
+  });
+}
+
+function showLoginPanel() {
+  const loginPanel = document.querySelector('#loginView .login-panel');
+  if (loginPanel) loginPanel.classList.remove('hidden');
+  if ($('registerPanel')) $('registerPanel').classList.add('hidden');
+}
+
+async function loadRegisterStores() {
+  const data = await api('/api/auth/register-options');
+  $('registerStore').innerHTML = (data.stores || [])
+    .map((row) => `<option value="${html(row.id)}">${html(row.name)}</option>`)
+    .join('');
+}
+
+async function registerAdmin(event) {
+  event.preventDefault();
+  const msg = $('registerMessage');
+  msg.className = 'message';
+  msg.textContent = '注册中...';
+  try {
+    const data = await api('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone: $('registerPhone').value,
+        name: $('registerName').value,
+        store_id: $('registerStore').value,
+        password: $('registerPassword').value,
+        invite_code: $('registerInviteCode').value,
+      }),
+    });
+    msg.className = 'message ok';
+    msg.textContent = '注册成功，请登录';
+    $('loginUsername').value = data.username || $('registerPhone').value;
+    $('loginPassword').value = '';
+    showLoginPanel();
+    $('loginMessage').className = 'message ok';
+    $('loginMessage').textContent = '注册成功，请使用手机号和密码登录';
+  } catch (err) {
+    msg.className = 'message error';
+    msg.textContent = err.message;
+  }
 }
 
 function formatDateTime(value) {
@@ -647,6 +708,22 @@ async function loadStoreMaintenance() {
   renderStoreRows(data.items || []);
 }
 
+async function loadAdminUsers() {
+  if (!$('adminUserRows')) return;
+  const data = await api('/api/admin-users');
+  $('adminUserRows').innerHTML = (data.items || []).map((row) => `
+    <tr>
+      <td>${html(row.display_name || row.username)}</td>
+      <td>${html(row.phone || row.username)}</td>
+      <td>${html(row.store_name)}</td>
+      <td>${html(row.role || 'staff')}</td>
+      <td>${row.enabled ? '<span class="tag unused">启用</span>' : '<span class="tag voided">停用</span>'}</td>
+      <td>${html(row.created_at)}</td>
+      <td>${html(row.last_login_at)}</td>
+    </tr>
+  `).join('');
+}
+
 async function createStore() {
   const msg = $('storeMessage');
   msg.className = 'message';
@@ -894,6 +971,7 @@ document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListen
   document.querySelectorAll('.view').forEach((item) => item.classList.add('hidden'));
   $('view-' + btn.dataset.view).classList.remove('hidden');
   if (btn.dataset.view === 'stores') loadStoreMaintenance();
+  if (btn.dataset.view === 'admin-users') loadAdminUsers();
   if (btn.dataset.view === 'logs') loadLogs();
 }));
 

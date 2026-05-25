@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 let profileRefreshTimer = null;
 let profileRefreshAttempts = 0;
+let smsCountdownTimer = null;
 
 function show(view) {
   ["loadingView", "bindView", "profileView", "couponDetailView"].forEach((id) => {
@@ -143,6 +144,41 @@ function startProfileRefreshPolling() {
       profileRefreshTimer = null;
     }
   }, 3000);
+}
+
+function startSmsCountdown(seconds = 60) {
+  clearInterval(smsCountdownTimer);
+  const button = $("smsButton");
+  let remaining = seconds;
+  button.disabled = true;
+  button.textContent = `${remaining}秒后重发`;
+  smsCountdownTimer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(smsCountdownTimer);
+      smsCountdownTimer = null;
+      button.disabled = false;
+      button.textContent = "获取验证码";
+      return;
+    }
+    button.textContent = `${remaining}秒后重发`;
+  }, 1000);
+}
+
+async function sendSmsCode() {
+  $("bindMessage").textContent = "";
+  try {
+    await api("/api/client/sms/send", {
+      method: "POST",
+      body: JSON.stringify({
+        phone: $("phoneInput").value,
+      }),
+    });
+    $("bindMessage").textContent = "验证码已发送，请查看短信。";
+    startSmsCountdown(60);
+  } catch (error) {
+    $("bindMessage").textContent = error.message;
+  }
 }
 
 async function bindPhone(event) {

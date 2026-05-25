@@ -16,9 +16,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .auth import authenticate, clear_session_cookie, current_username, require_login, set_session_cookie, verify_password
+from .auth import authenticate, clear_session_cookie, current_username, hash_password, require_login, set_session_cookie, verify_password
 from .cargeer import lookup_cargeer_options_by_phone
-from .config import AUTO_IMPORT, DB_PATH, WEB_DIR
+from .config import ADMIN_REGISTER_INVITE_CODE, AUTO_IMPORT, DB_PATH, WEB_DIR
 from .database import db_session, row_to_dict, rows_to_dicts
 from .schema import create_schema
 
@@ -64,6 +64,14 @@ class VoidCouponRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class RegisterAdminRequest(BaseModel):
+    phone: str
+    name: str
+    store_id: str
+    password: str
+    invite_code: str
 
 
 class CreateCustomerRequest(BaseModel):
@@ -432,6 +440,15 @@ def require_template(conn, template_id: str) -> dict:
     return template
 
 
+def active_unused_coupon_sql(alias: str = "") -> str:
+    prefix = f"{alias}." if alias else ""
+    return f"""
+        {prefix}status = 'unused'
+        AND COALESCE({prefix}status_text, '') IN ('', '未使用', '可用')
+        AND ({prefix}valid_end IS NULL OR {prefix}valid_end = '' OR datetime({prefix}valid_end) >= datetime('now', 'localtime'))
+    """
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "database": str(DB_PATH)}
@@ -524,6 +541,78 @@ def login(req: LoginRequest, response: Response) -> dict:
     raise HTTPException(status_code=401, detail="用户名或密码错误")
 
 
+@app.get("/api/auth/register-options")
+def register_options() -> dict:
+    with db_session() as conn:
+        return {"stores": usable_store_rows(conn)}
+
+
+@app.post("/api/auth/register")
+def register_admin(req: RegisterAdminRequest) -> dict:
+    phone = re.sub(r"\D+", "", req.phone or "")
+    name = req.name.strip()
+    password = req.password.strip()
+    if req.invite_code.strip() != ADMIN_REGISTER_INVITE_CODE:
+        raise HTTPException(status_code=400, detail="邀请码不正确")
+    if not re.fullmatch(r"1[3-9]\d{9}", phone):
+        raise HTTPException(status_code=400, detail="请输入正确的手机号")
+    if not name:
+        raise HTTPException(status_code=400, detail="请输入姓名")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="密码至少 6 位")
+
+    with db_session() as conn:
+        store = row_to_dict(
+            conn.execute(
+                "SELECT id, name FROM stores WHERE id = ? AND enabled = 1",
+                (req.store_id.strip(),),
+            ).fetchone()
+        )
+        if not store:
+            raise HTTPException(status_code=400, detail="请选择有效门店")
+        existing = row_to_dict(
+            conn.execute(
+                "SELECT id FROM admin_users WHERE username = ? OR phone = ?",
+                (phone, phone),
+            ).fetchone()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="该手机号已注册")
+
+        user_id = local_id("ADMIN_USER")
+        while conn.execute("SELECT 1 FROM admin_users WHERE id = ?", (user_id,)).fetchone():
+            user_id = local_id("ADMIN_USER")
+        conn.execute(
+            """
+            INSERT INTO admin_users (
+                id, username, password_hash, display_name, phone, store_id, store_name,
+                role, enabled, created_at, last_login_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'staff', 1, ?, NULL)
+            """,
+            (
+                user_id,
+                phone,
+                hash_password(password),
+                name,
+                phone,
+                store["id"],
+                store["name"],
+                now_text(),
+            ),
+        )
+        return {
+            "ok": True,
+            "username": phone,
+            "profile": {
+                "user_id": user_id,
+                "name": name,
+                "store_id": store["id"],
+                "store_name": store["name"],
+                "role": "staff",
+            },
+        }
+
+
 @app.post("/api/auth/logout")
 def logout(response: Response) -> dict:
     clear_session_cookie(response)
@@ -550,11 +639,7 @@ def summary(request: Request) -> dict:
             "customers": scalar("SELECT COUNT(*) FROM customers"),
             "coupons": scalar("SELECT COUNT(*) FROM coupons"),
             "unused_coupons": scalar(
-                """
-                SELECT COUNT(*) FROM coupons
-                WHERE status = 'unused'
-                  AND (valid_end IS NULL OR valid_end = '' OR datetime(valid_end) >= datetime('now', 'localtime'))
-                """
+                f"SELECT COUNT(*) FROM coupons WHERE {active_unused_coupon_sql()}"
             ),
             "used_coupons": scalar("SELECT COUNT(*) FROM coupons WHERE status = 'used'"),
             "templates": scalar("SELECT COUNT(*) FROM coupon_templates WHERE enabled = 1"),
@@ -630,8 +715,7 @@ def search_customers(
                 COUNT(cp.code) AS coupon_count,
                 SUM(
                     CASE
-                        WHEN cp.status = 'unused'
-                         AND (cp.valid_end IS NULL OR cp.valid_end = '' OR datetime(cp.valid_end) >= datetime('now', 'localtime'))
+                        WHEN {active_unused_coupon_sql('cp')}
                         THEN 1 ELSE 0
                     END
                 ) AS unused_coupon_count
@@ -804,6 +888,20 @@ def stores_all(request: Request) -> dict:
     require_login(request)
     with db_session() as conn:
         return {"items": all_store_rows(conn)}
+
+
+@app.get("/api/admin-users")
+def admin_users(request: Request) -> dict:
+    require_login(request)
+    with db_session() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, username, display_name, phone, store_name, role, enabled, created_at, last_login_at
+            FROM admin_users
+            ORDER BY enabled DESC, store_name, display_name, phone
+            """
+        ).fetchall()
+        return {"items": rows_to_dicts(rows)}
 
 
 @app.post("/api/stores")

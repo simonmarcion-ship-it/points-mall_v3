@@ -26,6 +26,7 @@ CRAWLER_V2_OUTPUT_DIR = Path(
 AUTO_IMPORT = env_bool("MALL_AUTO_IMPORT", default=APP_ENV != "production")
 ADMIN_USERNAME = os.getenv("MALL_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("MALL_ADMIN_PASSWORD", "change-me")
+ADMIN_REGISTER_INVITE_CODE = os.getenv("MALL_ADMIN_REGISTER_INVITE_CODE", "tianzijituan0525")
 SESSION_SECRET = os.getenv("MALL_SESSION_SECRET", "dev-session-secret-change-me")
 SESSION_COOKIE_NAME = os.getenv("MALL_SESSION_COOKIE_NAME", "points_mall_session")
 SESSION_MAX_AGE_SECONDS = int(os.getenv("MALL_SESSION_MAX_AGE_SECONDS", "28800"))

@@ -16,7 +16,8 @@
       <p>首次进入个人中心需要验证手机号，之后会自动登录。</p>
       <form onsubmit="bindPhone(event)">
         <label>手机号<input id="phoneInput" inputmode="tel" autocomplete="tel" placeholder="请输入手机号" /></label>
-        <label>验证码<input id="codeInput" inputmode="numeric" autocomplete="one-time-code" placeholder="开发阶段填 000000" /></label>
+        <label>验证码<input id="codeInput" inputmode="numeric" autocomplete="one-time-code" placeholder="请输入短信验证码" /></label>
+        <button id="smsButton" type="button" class="ghost" onclick="sendSmsCode()">获取验证码</button>
         <button type="submit">进入个人中心</button>
       </form>
       <div id="bindMessage" class="message"></div>
