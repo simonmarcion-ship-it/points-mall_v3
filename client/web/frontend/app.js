@@ -143,7 +143,7 @@ async function tryWechatOAuth() {
   try {
     const config = await api("/api/client/config");
     if (config.wechat_configured && !config.wechat_pending) {
-      window.location.href = "/api/client/wechat/start";
+      window.location.href = `/api/client/wechat/start?return=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
   } catch (error) {
     console.warn("wechat oauth check failed", error);

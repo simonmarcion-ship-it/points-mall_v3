@@ -165,6 +165,23 @@ def clear_pending_wechat(response: Response) -> None:
     response.delete_cookie(PENDING_WECHAT_COOKIE, path="/")
 
 
+def safe_return_path(value: str | None) -> str:
+    text = str(value or "").strip()
+    if not text.startswith("/") or text.startswith("//"):
+        return "/"
+    if "\r" in text or "\n" in text:
+        return "/"
+    return text
+
+
+def encode_wechat_state(return_path: str) -> str:
+    return encode_cookie_json({"r": safe_return_path(return_path), "n": secrets.token_urlsafe(6)})
+
+
+def decode_wechat_state(value: str | None) -> str:
+    return safe_return_path(decode_cookie_json(value).get("r"))
+
+
 def get_customer_by_wid(conn, wid: str) -> dict | None:
     return row_to_dict(
         conn.execute(
@@ -505,9 +522,21 @@ def client_config(request: Request) -> dict:
 
 
 @app.get("/api/client/wechat/start")
-def wechat_start() -> RedirectResponse:
+def wechat_start(request: Request) -> RedirectResponse:
     if not WECHAT_APPID or not WECHAT_APPSECRET or not WECHAT_OAUTH_REDIRECT_URI:
         return RedirectResponse(url="/?dev=1")
+
+    return_path = request.query_params.get("return") or request.headers.get("referer") or "/"
+    try:
+        if return_path.startswith("http"):
+            from urllib.parse import urlparse
+
+            parsed = urlparse(return_path)
+            return_path = parsed.path or "/"
+            if parsed.query:
+                return_path = f"{return_path}?{parsed.query}"
+    except Exception:
+        return_path = "/"
 
     query = urlencode(
         {
@@ -515,7 +544,7 @@ def wechat_start() -> RedirectResponse:
             "redirect_uri": WECHAT_OAUTH_REDIRECT_URI,
             "response_type": "code",
             "scope": "snsapi_userinfo",
-            "state": secrets.token_urlsafe(12),
+            "state": encode_wechat_state(return_path),
         }
     )
     return RedirectResponse(url=f"https://open.weixin.qq.com/connect/oauth2/authorize?{query}#wechat_redirect")
@@ -526,7 +555,7 @@ def wechat_callback(code: str = "", state: str = "") -> RedirectResponse:
     if not code:
         raise HTTPException(status_code=400, detail="缺少微信授权 code")
     identity = fetch_wechat_identity(code)
-    response = RedirectResponse(url="/")
+    response = RedirectResponse(url=decode_wechat_state(state) or "/")
     with db_session() as conn:
         binding = get_wechat_binding(conn, identity)
         if binding:
