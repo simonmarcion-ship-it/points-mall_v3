@@ -61,6 +61,18 @@ label {
   font-size: 14px;
 }
 
+.code-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 1fr);
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.code-row label {
+  margin-bottom: 0;
+}
+
 input {
   width: 100%;
   height: 46px;
@@ -87,6 +99,13 @@ button {
 form button {
   width: 100%;
   margin-top: 8px;
+}
+
+.code-row button {
+  height: 46px;
+  margin-top: 0;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .message {
