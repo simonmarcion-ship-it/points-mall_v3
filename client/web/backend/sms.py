@@ -20,6 +20,7 @@ from .config import (
     SMS_PROVIDER,
     WEIWEBS_SMS_ACCOUNT,
     WEIWEBS_SMS_BASE_URL,
+    WEIWEBS_SMS_AUTH_MODE,
     WEIWEBS_SMS_PASSWORD,
     WEIWEBS_SMS_PRODUCT,
     WEIWEBS_SMS_SIGN_NAME,
@@ -93,17 +94,20 @@ def _cleanup_expired() -> None:
 
 
 def _send_weiwebs_sms(phone: str, code: str) -> str:
-    ts = datetime.now().strftime("%Y%m%d%H%M%S")
-    pswd = hashlib.md5(f"{WEIWEBS_SMS_ACCOUNT}{WEIWEBS_SMS_PASSWORD}{ts}".encode("utf-8")).hexdigest()
     params = {
         "account": WEIWEBS_SMS_ACCOUNT,
-        "ts": ts,
-        "pswd": pswd,
+        "pswd": WEIWEBS_SMS_PASSWORD,
         "mobile": phone,
         "msg": f"【{WEIWEBS_SMS_SIGN_NAME}】验证码：{code}，5分钟内有效。",
         "needstatus": "true",
         "resptype": "json",
     }
+    if WEIWEBS_SMS_AUTH_MODE == "md5":
+        ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        params["ts"] = ts
+        params["pswd"] = hashlib.md5(
+            f"{WEIWEBS_SMS_ACCOUNT}{WEIWEBS_SMS_PASSWORD}{ts}".encode("utf-8")
+        ).hexdigest()
     if WEIWEBS_SMS_PRODUCT:
         params["product"] = WEIWEBS_SMS_PRODUCT
 

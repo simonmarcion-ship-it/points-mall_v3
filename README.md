@@ -88,6 +88,7 @@ WEIWEBS_SMS_ACCOUNT=
 WEIWEBS_SMS_PASSWORD=
 WEIWEBS_SMS_SIGN_NAME=
 WEIWEBS_SMS_PRODUCT=
+WEIWEBS_SMS_AUTH_MODE=plain
 ```
 
-`WEIWEBS_SMS_PRODUCT` 只有在短信平台要求指定产品 ID 时才填写。真实账号、密码、token 只放在 `deploy/.env`，不要写入 `deploy/env.example` 之外的说明或提交到 Git。
+`WEIWEBS_SMS_PRODUCT` 只有在短信平台要求指定产品 ID 时才填写。`WEIWEBS_SMS_AUTH_MODE` 默认用 `plain`，即按文档的“ts 为空时填明文密码”；如果平台要求 `ts + md5(account + password + ts)`，再改为 `md5`。真实账号、密码、token 只放在 `deploy/.env`，不要写入 `deploy/env.example` 之外的说明或提交到 Git。
