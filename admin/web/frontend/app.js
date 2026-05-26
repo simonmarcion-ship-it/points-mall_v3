@@ -224,8 +224,8 @@ async function loadSummary() {
   $('stats').innerHTML = [
     ['客户', data.customers],
     ['优惠券', data.coupons],
-    ['未使用券', data.unused_coupons],
-    ['已核销券', data.used_coupons],
+    ['昨日发券', data.yesterday_issued_coupons ?? 0],
+    ['昨日核销券', data.yesterday_redeemed_coupons ?? 0],
     ['模板', data.templates],
   ].map(([label, value]) => `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div></div>`).join('');
 }
@@ -255,6 +255,10 @@ async function searchCustomers(resetPage = true) {
       <td>${safe(row.wid)}</td>
       <td>${safe(row.phone)}</td>
       <td>${safe(row.nickname)}</td>
+      <td>${safe(row.real_name)}</td>
+      <td>${safe(row.vin)}</td>
+      <td>${safe(row.plate_no)}</td>
+      <td>${safe(row.car_series)}</td>
       <td>${safe(row.store_name)}</td>
       <td>${safe(row.became_customer_at)}</td>
       <td>${safe(row.joined_at)}</td>
@@ -925,7 +929,7 @@ async function createTemplate() {
 async function issueCoupon() {
   const msg = $('issueMessage');
   msg.className = 'message';
-  msg.textContent = '处理中...';
+  msg.textContent = '';
   try {
     if (!$('issueWid').value) {
       throw new Error('请先输入手机号并选择客户');
@@ -933,6 +937,11 @@ async function issueCoupon() {
     if ($('issueUsableStoreScope').value === 'selected' && selectedIssueUsableStoreNames().length === 0) {
       throw new Error('选择指定门店时，请至少选择一个可用门店');
     }
+    if (!confirmIssueCouponDetail()) {
+      msg.textContent = '已取消发券';
+      return;
+    }
+    msg.textContent = '处理中...';
     const data = await api('/api/coupons/issue', {
       method: 'POST',
       body: JSON.stringify({
@@ -955,6 +964,37 @@ async function issueCoupon() {
     msg.className = 'message error';
     msg.textContent = err.message;
   }
+}
+
+function confirmIssueCouponDetail() {
+  const template = $('issueTemplate').selectedOptions[0]?.textContent || $('issueTemplate').value || '-';
+  const quantity = Number($('issueQuantity').value || 0);
+  const validity = $('issueValidityType').value === 'unlimited'
+    ? '永久有效（2099年1月1日）'
+    : `${Number($('issueDays').value || 0)} 天`;
+  const scopeText = $('issueUsableStoreScope').selectedOptions[0]?.textContent || '-';
+  const stores = currentIssueScopeSelectedNames();
+  const storeText = stores.length ? stores.join('、') : scopeText;
+  const customer = [
+    $('issueNickname').value || '-',
+    $('issuePhone').value || '-',
+    $('issueWid').value || '-',
+  ].join(' / ');
+  const lines = [
+    '请确认是否给该客户发券：',
+    '',
+    `客户：${customer}`,
+    `客户归属门店：${$('issueStore').value || '-'}`,
+    `券模板：${template}`,
+    `数量：${quantity}`,
+    `有效期：${validity}`,
+    `使用门店范围：${scopeText}`,
+    `可使用门店：${storeText}`,
+    `备注：${$('issueRemark').value || '-'}`,
+    '',
+    '确认后将立即生成券码。',
+  ];
+  return window.confirm(lines.join('\n'));
 }
 
 async function redeemCoupon() {

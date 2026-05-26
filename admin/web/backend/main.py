@@ -684,6 +684,17 @@ def summary(request: Request) -> dict:
                 f"SELECT COUNT(*) FROM coupons WHERE {active_unused_coupon_sql()}"
             ),
             "used_coupons": scalar("SELECT COUNT(*) FROM coupons WHERE status = 'used'"),
+            "yesterday_issued_coupons": scalar(
+                "SELECT COUNT(*) FROM coupons "
+                "WHERE datetime(issued_at) >= datetime('now', 'localtime', 'start of day', '-1 day') "
+                "AND datetime(issued_at) < datetime('now', 'localtime', 'start of day')"
+            ),
+            "yesterday_redeemed_coupons": scalar(
+                "SELECT COUNT(*) FROM coupons "
+                "WHERE status = 'used' "
+                "AND datetime(redeemed_at) >= datetime('now', 'localtime', 'start of day', '-1 day') "
+                "AND datetime(redeemed_at) < datetime('now', 'localtime', 'start of day')"
+            ),
             "templates": scalar("SELECT COUNT(*) FROM coupon_templates WHERE enabled = 1"),
             "logs": scalar("SELECT COUNT(*) FROM operation_logs"),
         }
@@ -752,6 +763,7 @@ def search_customers(
             f"""
             SELECT
                 c.wid, c.phone, c.nickname, c.level_name, c.member_card, c.store_name,
+                c.real_name, c.vin, c.plate_no, c.car_series,
                 c.became_customer_at, c.joined_at, c.available_point, c.total_point,
                 c.available_balance, c.black_user, c.customer_status,
                 COUNT(cp.code) AS coupon_count,
