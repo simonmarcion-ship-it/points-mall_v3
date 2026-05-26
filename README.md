@@ -73,3 +73,21 @@ $env:CARGEER_CAPTCHA_TOKEN="打码平台 token"
 ```
 
 Cargeer 查询失败时，客户仍会以手机号完成注册；系统会在 `vehicle_query_success` / `vehicle_errmsg` 记录查询状态。
+
+## 客户端短信验证码
+
+客户端手机号绑定会调用短信服务发送验证码。未启用短信服务时，开发测试验证码为 `000000`。
+
+启用 weiwebs HTTP 短信平台时，在服务器 `deploy/.env` 配置：
+
+```env
+SMS_ENABLED=1
+SMS_PROVIDER=weiwebs_http
+WEIWEBS_SMS_BASE_URL=https://www.weiwebs.cn/msg/HttpBatchSendSM
+WEIWEBS_SMS_ACCOUNT=
+WEIWEBS_SMS_PASSWORD=
+WEIWEBS_SMS_SIGN_NAME=
+WEIWEBS_SMS_PRODUCT=
+```
+
+`WEIWEBS_SMS_PRODUCT` 只有在短信平台要求指定产品 ID 时才填写。真实账号、密码、token 只放在 `deploy/.env`，不要写入 `deploy/env.example` 之外的说明或提交到 Git。

@@ -25,6 +25,11 @@ CARGEER_TIMEOUT = float(os.getenv("CARGEER_TIMEOUT", "15"))
 
 SMS_ENABLED = os.getenv("SMS_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 SMS_PROVIDER = os.getenv("SMS_PROVIDER", "dev").strip().lower()
+WEIWEBS_SMS_BASE_URL = os.getenv("WEIWEBS_SMS_BASE_URL", "https://www.weiwebs.cn/msg/HttpBatchSendSM")
+WEIWEBS_SMS_ACCOUNT = os.getenv("WEIWEBS_SMS_ACCOUNT", "")
+WEIWEBS_SMS_PASSWORD = os.getenv("WEIWEBS_SMS_PASSWORD", "")
+WEIWEBS_SMS_SIGN_NAME = os.getenv("WEIWEBS_SMS_SIGN_NAME", "")
+WEIWEBS_SMS_PRODUCT = os.getenv("WEIWEBS_SMS_PRODUCT", "")
 ALIYUN_ACCESS_KEY_ID = os.getenv("ALIYUN_ACCESS_KEY_ID") or os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
 ALIYUN_ACCESS_KEY_SECRET = os.getenv("ALIYUN_ACCESS_KEY_SECRET") or os.getenv(
     "ALIBABA_CLOUD_ACCESS_KEY_SECRET",

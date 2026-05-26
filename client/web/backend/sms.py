@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import hashlib
 import json
 import logging
 import os
 import re
 import secrets
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from .config import (
     ALIYUN_ACCESS_KEY_ID,
@@ -14,6 +18,11 @@ from .config import (
     ALIYUN_SMS_TEMPLATE_CODE,
     SMS_ENABLED,
     SMS_PROVIDER,
+    WEIWEBS_SMS_ACCOUNT,
+    WEIWEBS_SMS_BASE_URL,
+    WEIWEBS_SMS_PASSWORD,
+    WEIWEBS_SMS_PRODUCT,
+    WEIWEBS_SMS_SIGN_NAME,
 )
 
 
@@ -44,16 +53,18 @@ def normalize_phone(phone: str) -> str:
 def sms_configured() -> bool:
     if not SMS_ENABLED:
         return False
-    if SMS_PROVIDER != "aliyun_sms":
-        return False
-    return all(
-        [
-            ALIYUN_ACCESS_KEY_ID,
-            ALIYUN_ACCESS_KEY_SECRET,
-            ALIYUN_SMS_SIGN_NAME,
-            ALIYUN_SMS_TEMPLATE_CODE,
-        ]
-    )
+    if SMS_PROVIDER == "aliyun_sms":
+        return all(
+            [
+                ALIYUN_ACCESS_KEY_ID,
+                ALIYUN_ACCESS_KEY_SECRET,
+                ALIYUN_SMS_SIGN_NAME,
+                ALIYUN_SMS_TEMPLATE_CODE,
+            ]
+        )
+    if SMS_PROVIDER == "weiwebs_http":
+        return all([WEIWEBS_SMS_BASE_URL, WEIWEBS_SMS_ACCOUNT, WEIWEBS_SMS_PASSWORD, WEIWEBS_SMS_SIGN_NAME])
+    return False
 
 
 def _aliyun_client():
@@ -81,13 +92,54 @@ def _cleanup_expired() -> None:
         _SMS_CODES.pop(phone, None)
 
 
+def _send_weiwebs_sms(phone: str, code: str) -> str:
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    pswd = hashlib.md5(f"{WEIWEBS_SMS_ACCOUNT}{WEIWEBS_SMS_PASSWORD}{ts}".encode("utf-8")).hexdigest()
+    params = {
+        "account": WEIWEBS_SMS_ACCOUNT,
+        "ts": ts,
+        "pswd": pswd,
+        "mobile": phone,
+        "msg": f"【{WEIWEBS_SMS_SIGN_NAME}】验证码：{code}，5分钟内有效。",
+        "needstatus": "true",
+        "resptype": "json",
+    }
+    if WEIWEBS_SMS_PRODUCT:
+        params["product"] = WEIWEBS_SMS_PRODUCT
+
+    body = urllib.parse.urlencode(params).encode("utf-8")
+    request = urllib.request.Request(
+        WEIWEBS_SMS_BASE_URL,
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as exc:
+        raise SmsError(f"短信接口请求失败：{exc}") from exc
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning("Weiwebs SMS non-json response phone_suffix=%s response=%s", phone[-4:], raw[:200])
+        raise SmsError("短信接口返回格式异常") from exc
+
+    result = data.get("result")
+    if str(result) != "0":
+        logger.warning("Weiwebs SMS send failed phone_suffix=%s result=%s response=%s", phone[-4:], result, data)
+        raise SmsError(f"短信发送失败，错误码：{result}")
+
+    msgid = str(data.get("msgid") or "")
+    logger.info("Weiwebs SMS send accepted phone_suffix=%s msgid=%s", phone[-4:], msgid)
+    return msgid
+
+
 def send_sms_code(phone: str) -> None:
     phone = normalize_phone(phone)
     if not sms_configured():
         raise SmsError("短信服务未配置")
-
-    if SMS_PROVIDER != "aliyun_sms":
-        raise SmsError("暂不支持的短信供应商")
 
     _cleanup_expired()
     existing = _SMS_CODES.get(phone)
@@ -97,10 +149,20 @@ def send_sms_code(phone: str) -> None:
         if seconds_since_last_send < 60:
             raise SmsError(f"请 {int(60 - seconds_since_last_send)} 秒后再获取验证码")
 
+    code = f"{secrets.randbelow(1000000):06d}"
+
+    if SMS_PROVIDER == "weiwebs_http":
+        _send_weiwebs_sms(phone, code)
+        now = datetime.now()
+        _SMS_CODES[phone] = (code, now + timedelta(minutes=5), 0, now)
+        return
+
+    if SMS_PROVIDER != "aliyun_sms":
+        raise SmsError("暂不支持的短信供应商")
+
     from alibabacloud_dysmsapi20170525 import models as dysmsapi_models
     from alibabacloud_tea_util import models as util_models
 
-    code = f"{secrets.randbelow(10000):04d}"
     request = dysmsapi_models.SendSmsRequest(
         phone_numbers=phone,
         sign_name=ALIYUN_SMS_SIGN_NAME,
@@ -142,7 +204,7 @@ def verify_sms_code(phone: str, code: str) -> bool:
     if not sms_configured():
         return code == "000000"
 
-    if SMS_PROVIDER != "aliyun_sms":
+    if SMS_PROVIDER not in {"aliyun_sms", "weiwebs_http"}:
         raise SmsError("暂不支持的短信供应商")
 
     _cleanup_expired()
