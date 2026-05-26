@@ -206,7 +206,7 @@ def verify_sms_code(phone: str, code: str) -> bool:
         raise SmsError("请输入验证码")
 
     if not sms_configured():
-        return code == "000000"
+        raise SmsError("短信服务未配置")
 
     if SMS_PROVIDER not in {"aliyun_sms", "weiwebs_http"}:
         raise SmsError("暂不支持的短信供应商")

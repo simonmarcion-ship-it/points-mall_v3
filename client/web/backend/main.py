@@ -663,39 +663,7 @@ def send_client_sms(req: SendSmsRequest) -> dict:
 
 @app.post("/api/client/bind-phone-legacy")
 def bind_phone(req: BindPhoneRequest, response: Response) -> dict:
-    phone = req.phone.strip()
-    if not phone:
-        raise HTTPException(status_code=400, detail="请输入手机号")
-
-    # 骨架阶段先允许 000000 作为本地测试验证码；正式环境必须接短信服务。
-    if req.sms_code.strip() != "000000":
-        raise HTTPException(status_code=400, detail="开发阶段验证码请填写 000000")
-
-    with db_session() as conn:
-        customer = get_customer_by_phone(conn, phone)
-        created = False
-        if not customer:
-            wid = f"LOCAL_CUSTOMER_{phone}"
-            created = True
-            conn.execute(
-                """
-                INSERT INTO customers (
-                    wid, phone, nickname, gender, birthday, avatar_url, became_customer_at,
-                    store_name, channel, member_card, level_name, joined_at, black_user,
-                    customer_status, available_point, total_point, frozen_point,
-                    available_balance, frozen_balance, total_balance, raw_json
-                ) VALUES (?, ?, ?, '', '', NULL, ?, '', '服务号客户端', NULL, '', ?, 'False',
-                          '本地客户', '0', '0', '0', '0', '0', '0', '{}')
-                """,
-                (wid, phone, req.nickname.strip(), now_text(), now_text()),
-            )
-            customer = get_customer_by_wid(conn, wid)
-
-        if not customer:
-            raise HTTPException(status_code=500, detail="绑定客户失败")
-
-        set_client_session(response, customer["wid"])
-        return {"customer": customer, "created": created}
+    raise HTTPException(status_code=410, detail="旧验证码登录接口已关闭")
 
 
 @app.post("/api/client/bind-phone")
