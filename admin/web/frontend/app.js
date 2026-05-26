@@ -1,4 +1,7 @@
 const $ = (id) => document.getElementById(id);
+const ADMIN_BASE = window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/')
+  ? '/admin'
+  : '';
 let selectedWid = '';
 let customerPage = 1;
 let customerTotal = 0;
@@ -13,13 +16,18 @@ let customerListScrollY = 0;
 let redeemScannerStream = null;
 let redeemScannerTimer = null;
 let redeemBarcodeDetector = null;
+let redeemLookupTimer = null;
+let lastRedeemLookupCode = '';
+let wechatScanConfigured = false;
+let wechatScanConfigPromise = null;
 
 function scrollWindowTop() {
   requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
 }
 
 async function api(path, options = {}) {
-  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+  const apiPath = path.startsWith('/api/') ? ADMIN_BASE + path : path;
+  const res = await fetch(apiPath, { headers: { 'Content-Type': 'application/json' }, ...options });
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
     const text = await res.text();
@@ -951,6 +959,19 @@ async function issueCoupon() {
 
 async function redeemCoupon() {
   const msg = $('redeemMessage');
+  const coupon = await previewRedeemCoupon();
+  if (!coupon) return;
+  const status = normalizeCouponStatus(coupon);
+  if (status !== 'unused') {
+    msg.className = 'message error';
+    msg.textContent = `该券当前不可核销：${coupon.status_text || coupon.status || status}`;
+    return;
+  }
+  if (!confirmRedeemCouponDetail(coupon)) {
+    msg.className = 'message';
+    msg.textContent = '已取消核销';
+    return;
+  }
   msg.className = 'message';
   msg.textContent = '处理中...';
   try {
@@ -966,6 +987,24 @@ async function redeemCoupon() {
     msg.className = 'message error';
     msg.textContent = err.message;
   }
+}
+
+function confirmRedeemCouponDetail(coupon) {
+  const customerName = coupon.customer_real_name || coupon.customer_nickname || '-';
+  const lines = [
+    '请再次确认是否核销这张券：',
+    '',
+    `券码：${coupon.code || '-'}`,
+    `券名称：${coupon.template_name || '-'}`,
+    `客户：${customerName} / ${coupon.customer_phone || '-'}`,
+    `客户WID：${coupon.customer_wid || '-'}`,
+    `客户门店：${coupon.customer_store_name || '-'}`,
+    `有效期：${coupon.valid_period || '-'}`,
+    `使用门店：${coupon.usable_store_names || '-'}`,
+    '',
+    '确认后将立即核销，不能重复使用。',
+  ];
+  return window.confirm(lines.join('\n'));
 }
 
 function couponCodeFromScan(value) {
@@ -1008,6 +1047,7 @@ async function previewRedeemCoupon(codeValue = '') {
     return null;
   }
 
+  lastRedeemLookupCode = code;
   msg.className = 'message';
   msg.textContent = '正在查询券码...';
   try {
@@ -1023,6 +1063,22 @@ async function previewRedeemCoupon(codeValue = '') {
   }
 }
 
+function scheduleRedeemCouponPreview() {
+  if (redeemLookupTimer) clearTimeout(redeemLookupTimer);
+  const code = couponCodeFromScan($('redeemCode').value);
+  if (!code) {
+    lastRedeemLookupCode = '';
+    $('redeemPreview').classList.add('hidden');
+    $('redeemPreview').innerHTML = '';
+    $('redeemMessage').className = 'message';
+    $('redeemMessage').textContent = '';
+    return;
+  }
+  redeemLookupTimer = setTimeout(() => {
+    if (code !== lastRedeemLookupCode) previewRedeemCoupon(code);
+  }, 600);
+}
+
 function stopCouponScanner() {
   if (redeemScannerTimer) {
     clearTimeout(redeemScannerTimer);
@@ -1034,6 +1090,70 @@ function stopCouponScanner() {
   }
   const panel = $('redeemScanner');
   if (panel) panel.classList.add('hidden');
+}
+
+function isWechatBrowser() {
+  return /MicroMessenger/i.test(navigator.userAgent || '');
+}
+
+function currentWechatSignUrl() {
+  return window.location.href.split('#')[0];
+}
+
+async function ensureWechatScanConfigured() {
+  if (wechatScanConfigured) return true;
+  if (wechatScanConfigPromise) return wechatScanConfigPromise;
+  wechatScanConfigPromise = (async () => {
+    if (!window.wx) throw new Error('微信 JS-SDK 未加载，请刷新页面后重试');
+    const config = await api('/api/wechat/js-sdk-config?url=' + encodeURIComponent(currentWechatSignUrl()));
+    await new Promise((resolve, reject) => {
+      window.wx.config({
+        debug: false,
+        appId: config.appId,
+        timestamp: config.timestamp,
+        nonceStr: config.nonceStr,
+        signature: config.signature,
+        jsApiList: ['scanQRCode'],
+      });
+      window.wx.ready(resolve);
+      window.wx.error((err) => reject(new Error(err.errMsg || '微信扫码初始化失败')));
+    });
+    wechatScanConfigured = true;
+    return true;
+  })();
+  try {
+    return await wechatScanConfigPromise;
+  } finally {
+    if (!wechatScanConfigured) wechatScanConfigPromise = null;
+  }
+}
+
+async function startWechatCouponScanner() {
+  const msg = $('redeemMessage');
+  msg.className = 'message';
+  msg.textContent = '正在启动微信扫码...';
+  try {
+    await ensureWechatScanConfigured();
+    window.wx.scanQRCode({
+      needResult: 1,
+      scanType: ['qrCode'],
+      success: async (res) => {
+        const value = res.resultStr || '';
+        await previewRedeemCoupon(value);
+      },
+      fail: (err) => {
+        msg.className = 'message error';
+        msg.textContent = `微信扫码失败：${err.errMsg || '请重试'}`;
+      },
+      cancel: () => {
+        msg.className = 'message';
+        msg.textContent = '已取消扫码';
+      },
+    });
+  } catch (err) {
+    msg.className = 'message error';
+    msg.textContent = err.message;
+  }
 }
 
 async function scanCouponFrame() {
@@ -1057,9 +1177,13 @@ async function startCouponScanner() {
   const msg = $('redeemMessage');
   msg.className = 'message';
   msg.textContent = '';
+  if (isWechatBrowser()) {
+    await startWechatCouponScanner();
+    return;
+  }
   if (!('BarcodeDetector' in window)) {
     msg.className = 'message error';
-    msg.textContent = '当前浏览器不支持网页扫码，请手动输入券码';
+    msg.textContent = '当前浏览器不支持网页扫码，请使用微信打开或手动输入券码';
     return;
   }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1144,6 +1268,14 @@ async function init() {
     if (event.key === 'Enter') {
       event.preventDefault();
       lookupNewCustomerCargeer();
+    }
+  });
+  $('redeemCode').addEventListener('input', scheduleRedeemCouponPreview);
+  $('redeemCode').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (redeemLookupTimer) clearTimeout(redeemLookupTimer);
+      previewRedeemCoupon();
     }
   });
   syncIssueValidityType();

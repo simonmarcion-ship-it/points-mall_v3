@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import re
 import secrets
+import time
 
 from fastapi import FastAPI, HTTPException
 from fastapi import Request, Response
@@ -15,10 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import requests
 
 from .auth import authenticate, clear_session_cookie, current_username, hash_password, require_login, set_session_cookie, verify_password
 from .cargeer import lookup_cargeer_options_by_phone
-from .config import ADMIN_REGISTER_INVITE_CODE, AUTO_IMPORT, DB_PATH, WEB_DIR
+from .config import ADMIN_REGISTER_INVITE_CODE, AUTO_IMPORT, DB_PATH, WEB_DIR, WECHAT_APPID, WECHAT_APPSECRET
 from .database import db_session, row_to_dict, rows_to_dicts
 from .schema import create_schema
 
@@ -35,6 +37,8 @@ app.add_middleware(
 )
 
 expiry_task: asyncio.Task | None = None
+wechat_access_token_cache: dict = {}
+wechat_jsapi_ticket_cache: dict = {}
 
 
 class IssueCouponRequest(BaseModel):
@@ -137,6 +141,43 @@ async def shutdown_coupon_expiry_task() -> None:
 
 def now_text() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_wechat_access_token() -> str:
+    if not WECHAT_APPID or not WECHAT_APPSECRET:
+        raise HTTPException(status_code=400, detail="微信扫码未配置")
+    now = time.time()
+    if wechat_access_token_cache.get("value") and wechat_access_token_cache.get("expires_at", 0) > now + 120:
+        return wechat_access_token_cache["value"]
+    res = requests.get(
+        "https://api.weixin.qq.com/cgi-bin/token",
+        params={"grant_type": "client_credential", "appid": WECHAT_APPID, "secret": WECHAT_APPSECRET},
+        timeout=10,
+    )
+    data = res.json()
+    token = data.get("access_token")
+    if not token:
+        raise HTTPException(status_code=502, detail=data.get("errmsg") or "获取微信 access_token 失败")
+    wechat_access_token_cache.update({"value": token, "expires_at": now + int(data.get("expires_in", 7200))})
+    return token
+
+
+def get_wechat_jsapi_ticket() -> str:
+    now = time.time()
+    if wechat_jsapi_ticket_cache.get("value") and wechat_jsapi_ticket_cache.get("expires_at", 0) > now + 120:
+        return wechat_jsapi_ticket_cache["value"]
+    token = get_wechat_access_token()
+    res = requests.get(
+        "https://api.weixin.qq.com/cgi-bin/ticket/getticket",
+        params={"access_token": token, "type": "jsapi"},
+        timeout=10,
+    )
+    data = res.json()
+    ticket = data.get("ticket")
+    if not ticket:
+        raise HTTPException(status_code=502, detail=data.get("errmsg") or "获取微信 jsapi_ticket 失败")
+    wechat_jsapi_ticket_cache.update({"value": ticket, "expires_at": now + int(data.get("expires_in", 7200))})
+    return ticket
 
 
 def local_id(prefix: str) -> str:
@@ -1257,6 +1298,25 @@ def logs(request: Request, limit: int = 100) -> dict:
             (limit,),
         ).fetchall()
         return {"items": rows_to_dicts(rows)}
+
+
+@app.get("/api/wechat/js-sdk-config")
+def wechat_js_sdk_config(request: Request, url: str) -> dict:
+    require_login(request)
+    page_url = url.strip()
+    if not page_url:
+        raise HTTPException(status_code=400, detail="缺少页面地址")
+    ticket = get_wechat_jsapi_ticket()
+    nonce_str = secrets.token_hex(8)
+    timestamp = int(time.time())
+    raw = f"jsapi_ticket={ticket}&noncestr={nonce_str}&timestamp={timestamp}&url={page_url}"
+    signature = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return {
+        "appId": WECHAT_APPID,
+        "timestamp": timestamp,
+        "nonceStr": nonce_str,
+        "signature": signature,
+    }
 
 
 app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
