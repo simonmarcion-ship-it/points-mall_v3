@@ -7,10 +7,11 @@ import json
 import secrets
 import urllib.error
 import urllib.request
+from urllib.parse import parse_qs
 from urllib.parse import urlencode
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -19,6 +20,7 @@ from .config import (
     SESSION_COOKIE_NAME,
     SMS_ENABLED,
     WEB_DIR,
+    CLIENT_TEST_GATE_PASSWORD,
     WECHAT_APPID,
     WECHAT_APPSECRET,
     WECHAT_OAUTH_REDIRECT_URI,
@@ -31,6 +33,7 @@ from .sms import SmsError, normalize_phone, send_sms_code, verify_sms_code
 
 FRONTEND_DIR = WEB_DIR / "frontend"
 PENDING_WECHAT_COOKIE = f"{SESSION_COOKIE_NAME}_wechat_pending"
+TEST_GATE_COOKIE = f"{SESSION_COOKIE_NAME}_test_gate"
 
 app = FastAPI(title="天选好车主服务号客户端 API")
 
@@ -163,6 +166,30 @@ def get_pending_wechat(request: Request) -> dict:
 
 def clear_pending_wechat(response: Response) -> None:
     response.delete_cookie(PENDING_WECHAT_COOKIE, path="/")
+
+
+def test_gate_enabled() -> bool:
+    return bool(CLIENT_TEST_GATE_PASSWORD.strip())
+
+
+def has_test_gate_access(request: Request) -> bool:
+    if not test_gate_enabled():
+        return True
+    return secrets.compare_digest(
+        request.cookies.get(TEST_GATE_COOKIE, ""),
+        CLIENT_TEST_GATE_PASSWORD.strip(),
+    )
+
+
+def set_test_gate_access(response: Response) -> None:
+    response.set_cookie(
+        TEST_GATE_COOKIE,
+        CLIENT_TEST_GATE_PASSWORD.strip(),
+        max_age=60 * 60 * 24 * 7,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
 
 
 def safe_return_path(value: str | None) -> str:
@@ -772,15 +799,106 @@ def bind_phone_with_cargeer(
 app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
 
 
+@app.get("/test-gate", response_class=HTMLResponse)
+def test_gate(request: Request) -> HTMLResponse | RedirectResponse:
+    if has_test_gate_access(request):
+        return RedirectResponse(url="/client/")
+
+    error = "密码不正确" if request.query_params.get("error") else ""
+    error_html = f'<div class="error">{error}</div>' if error else ""
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>内部测试</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f6f7f9;
+      color: #172033;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{
+      width: min(92vw, 360px);
+      padding: 28px 22px;
+      background: #fff;
+      border: 1px solid #e6e8ee;
+      border-radius: 8px;
+      box-shadow: 0 12px 30px rgba(20, 32, 52, .08);
+    }}
+    h1 {{ margin: 0 0 8px; font-size: 24px; }}
+    p {{ margin: 0 0 20px; color: #667085; line-height: 1.6; }}
+    label {{ display: grid; gap: 8px; font-size: 14px; color: #344054; }}
+    input {{
+      width: 100%;
+      height: 44px;
+      padding: 0 12px;
+      border: 1px solid #d0d5dd;
+      border-radius: 6px;
+      font-size: 16px;
+    }}
+    button {{
+      width: 100%;
+      height: 44px;
+      margin-top: 14px;
+      border: 0;
+      border-radius: 6px;
+      background: #176b87;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+    }}
+    .error {{ margin-bottom: 12px; color: #b42318; font-size: 14px; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>内部测试</h1>
+    <p>请输入测试口令后进入积分商城。</p>
+    {error_html}
+    <form method="post" action="test-gate/verify">
+      <label>测试口令
+        <input name="password" type="password" autocomplete="current-password" autofocus />
+      </label>
+      <button type="submit">进入</button>
+    </form>
+  </main>
+</body>
+</html>"""
+    )
+
+
+@app.post("/test-gate/verify")
+async def test_gate_verify(request: Request) -> RedirectResponse:
+    body = (await request.body()).decode("utf-8", errors="ignore")
+    password = (parse_qs(body).get("password") or [""])[0]
+    if test_gate_enabled() and not secrets.compare_digest(password, CLIENT_TEST_GATE_PASSWORD.strip()):
+        return RedirectResponse(url="../test-gate?error=1", status_code=303)
+    response = RedirectResponse(url="../", status_code=303)
+    if test_gate_enabled():
+        set_test_gate_access(response)
+    return response
+
+
 @app.get("/")
-def index() -> FileResponse:
+def index(request: Request) -> FileResponse | RedirectResponse:
+    if not has_test_gate_access(request) and request.query_params.get("dev") != "1":
+        return RedirectResponse(url="test-gate")
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
 @app.get("/{path:path}")
-def spa_fallback(path: str) -> FileResponse:
+def spa_fallback(path: str, request: Request) -> FileResponse | RedirectResponse:
     if path.startswith("api/"):
         raise HTTPException(status_code=404, detail="接口不存在，请确认后端服务已重启")
+    if path.startswith("client") and not has_test_gate_access(request):
+        return RedirectResponse(url="/test-gate")
     candidate = FRONTEND_DIR / path
     if candidate.exists() and candidate.is_file():
         return FileResponse(candidate)

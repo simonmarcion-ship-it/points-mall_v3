@@ -16,6 +16,7 @@ WECHAT_APPID = os.getenv("WECHAT_APPID", "")
 WECHAT_APPSECRET = os.getenv("WECHAT_APPSECRET", "")
 WECHAT_OAUTH_REDIRECT_URI = os.getenv("WECHAT_OAUTH_REDIRECT_URI", "")
 SESSION_COOKIE_NAME = os.getenv("CLIENT_SESSION_COOKIE_NAME", "tx_client_session")
+CLIENT_TEST_GATE_PASSWORD = os.getenv("CLIENT_TEST_GATE_PASSWORD", "")
 
 CARGEER_ENABLED = os.getenv("CARGEER_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 CARGEER_ACCOUNT = os.getenv("CARGEER_ACCOUNT") or os.getenv("CARGEER_USERNAME", "")
