@@ -1158,6 +1158,38 @@ def redeem_coupon(req: RedeemCouponRequest, request: Request) -> dict:
         return {"coupon": coupon}
 
 
+@app.get("/api/coupons/{code}/preview")
+def coupon_preview(code: str, request: Request) -> dict:
+    require_login(request)
+    coupon_code = code.strip()
+    if not coupon_code:
+        raise HTTPException(status_code=400, detail="请输入券码")
+
+    with db_session() as conn:
+        row = conn.execute(
+            """
+            SELECT cp.*,
+                   c.phone AS customer_phone,
+                   c.nickname AS customer_nickname,
+                   c.real_name AS customer_real_name,
+                   c.store_name AS customer_store_name
+            FROM coupons cp
+            LEFT JOIN customers c ON c.wid = cp.customer_wid
+            WHERE cp.code = ?
+            """,
+            (coupon_code,),
+        ).fetchone()
+        coupon = row_to_dict(row)
+        if not coupon:
+            raise HTTPException(status_code=404, detail="券码不存在")
+        coupon = apply_dynamic_coupon_status(coupon)
+        return {
+            "coupon": coupon,
+            "redeemable": coupon.get("status") == "unused",
+            "message": "" if coupon.get("status") == "unused" else f"该券当前不可核销: {coupon.get('status_text')}",
+        }
+
+
 @app.post("/api/coupons/void")
 def void_coupon(req: VoidCouponRequest, request: Request) -> dict:
     username = require_login(request)

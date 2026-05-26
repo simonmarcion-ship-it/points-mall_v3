@@ -235,7 +235,19 @@
               <label>券码<input id="redeemCode" placeholder="输入券码" /></label>
               <label class="wide">备注<input id="redeemRemark" placeholder="备注" /></label>
             </div>
-            <div class="actions"><button class="danger" onclick="redeemCoupon()">确认核销</button></div>
+            <div class="actions redeem-actions">
+              <button type="button" class="secondary" onclick="previewRedeemCoupon()">查询券码</button>
+              <button type="button" class="secondary" onclick="startCouponScanner()">扫码</button>
+              <button class="danger" onclick="redeemCoupon()">确认核销</button>
+            </div>
+            <div id="redeemScanner" class="scanner-panel hidden">
+              <video id="redeemScannerVideo" playsinline muted></video>
+              <div class="scanner-actions">
+                <span id="redeemScannerStatus">正在启动摄像头...</span>
+                <button type="button" class="secondary" onclick="stopCouponScanner()">关闭扫码</button>
+              </div>
+            </div>
+            <div id="redeemPreview" class="redeem-preview hidden"></div>
             <p id="redeemMessage" class="message"></p>
           </div>
         </div>
@@ -277,6 +289,6 @@
     <button type="button" onclick="confirmContextCouponRedeem()">核销</button>
     <button type="button" class="danger" onclick="confirmContextCouponVoid()">作废</button>
   </div>
-  <script src="/assets/app.js?v=20260525-validity-type"></script>
+  <script src="/assets/app.js?v=20260526-scan-redeem"></script>
 </body>
 </html>

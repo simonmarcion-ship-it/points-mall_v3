@@ -10,6 +10,9 @@ let newCustomerCargeerRows = [];
 let contextCouponIndex = null;
 let currentAdminProfile = {};
 let customerListScrollY = 0;
+let redeemScannerStream = null;
+let redeemScannerTimer = null;
+let redeemBarcodeDetector = null;
 
 function scrollWindowTop() {
   requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
@@ -962,6 +965,127 @@ async function redeemCoupon() {
   } catch (err) {
     msg.className = 'message error';
     msg.textContent = err.message;
+  }
+}
+
+function couponCodeFromScan(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  try {
+    const url = new URL(text);
+    return (url.searchParams.get('code') || url.pathname.split('/').filter(Boolean).pop() || text).trim();
+  } catch (err) {
+    return text;
+  }
+}
+
+function renderRedeemPreview(coupon) {
+  const status = normalizeCouponStatus(coupon);
+  const customerName = coupon.customer_real_name || coupon.customer_nickname || '-';
+  $('redeemPreview').classList.remove('hidden');
+  $('redeemPreview').innerHTML = `
+    <div class="kv coupon-detail-grid">
+      <div class="key">券码</div><div>${safe(coupon.code)}</div>
+      <div class="key">券名称</div><div>${safe(coupon.template_name)}</div>
+      <div class="key">状态</div><div>${statusTag(status, status === 'expired' ? '已过期' : (coupon.status_text || coupon.status))}</div>
+      <div class="key">客户</div><div>${safe(customerName)} / ${safe(coupon.customer_phone)}</div>
+      <div class="key">客户门店</div><div>${safe(coupon.customer_store_name)}</div>
+      <div class="key">有效期</div><div>${safe(coupon.valid_period)}</div>
+      <div class="key">使用门店</div><div>${safe(coupon.usable_store_names)}</div>
+    </div>
+  `;
+}
+
+async function previewRedeemCoupon(codeValue = '') {
+  const msg = $('redeemMessage');
+  const code = couponCodeFromScan(codeValue || $('redeemCode').value);
+  $('redeemCode').value = code;
+  $('redeemPreview').classList.add('hidden');
+  $('redeemPreview').innerHTML = '';
+  if (!code) {
+    msg.className = 'message error';
+    msg.textContent = '请输入或扫码获取券码';
+    return null;
+  }
+
+  msg.className = 'message';
+  msg.textContent = '正在查询券码...';
+  try {
+    const data = await api('/api/coupons/' + encodeURIComponent(code) + '/preview');
+    renderRedeemPreview(data.coupon);
+    msg.className = data.redeemable ? 'message ok' : 'message error';
+    msg.textContent = data.redeemable ? '券码可核销，请确认信息后点击确认核销' : data.message;
+    return data.coupon;
+  } catch (err) {
+    msg.className = 'message error';
+    msg.textContent = err.message;
+    return null;
+  }
+}
+
+function stopCouponScanner() {
+  if (redeemScannerTimer) {
+    clearTimeout(redeemScannerTimer);
+    redeemScannerTimer = null;
+  }
+  if (redeemScannerStream) {
+    redeemScannerStream.getTracks().forEach((track) => track.stop());
+    redeemScannerStream = null;
+  }
+  const panel = $('redeemScanner');
+  if (panel) panel.classList.add('hidden');
+}
+
+async function scanCouponFrame() {
+  if (!redeemBarcodeDetector || !redeemScannerStream) return;
+  const video = $('redeemScannerVideo');
+  try {
+    const codes = await redeemBarcodeDetector.detect(video);
+    if (codes && codes.length) {
+      const value = codes[0].rawValue || '';
+      stopCouponScanner();
+      await previewRedeemCoupon(value);
+      return;
+    }
+  } catch (err) {
+    $('redeemScannerStatus').textContent = `扫码失败：${err.message}`;
+  }
+  redeemScannerTimer = setTimeout(scanCouponFrame, 350);
+}
+
+async function startCouponScanner() {
+  const msg = $('redeemMessage');
+  msg.className = 'message';
+  msg.textContent = '';
+  if (!('BarcodeDetector' in window)) {
+    msg.className = 'message error';
+    msg.textContent = '当前浏览器不支持网页扫码，请手动输入券码';
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    msg.className = 'message error';
+    msg.textContent = '当前页面无法调用摄像头，请确认使用支持摄像头的浏览器或改用手动输入';
+    return;
+  }
+
+  stopCouponScanner();
+  $('redeemScanner').classList.remove('hidden');
+  $('redeemScannerStatus').textContent = '正在启动摄像头...';
+  try {
+    redeemBarcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+    redeemScannerStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false,
+    });
+    const video = $('redeemScannerVideo');
+    video.srcObject = redeemScannerStream;
+    await video.play();
+    $('redeemScannerStatus').textContent = '请对准客户手机上的券码二维码';
+    await scanCouponFrame();
+  } catch (err) {
+    stopCouponScanner();
+    msg.className = 'message error';
+    msg.textContent = `无法启动扫码：${err.message}`;
   }
 }
 

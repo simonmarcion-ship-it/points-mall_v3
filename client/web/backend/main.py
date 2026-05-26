@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from io import BytesIO
 from datetime import datetime
 import ast
 import json
@@ -10,7 +11,7 @@ import urllib.request
 from urllib.parse import urlencode
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -640,6 +641,37 @@ def client_coupon_detail(code: str, request: Request) -> dict:
             ).fetchone()
         )
         return {"coupon": public_coupon_detail(coupon, template)}
+
+
+@app.get("/api/client/coupons/{code}/qr")
+def client_coupon_qr(code: str, request: Request) -> StreamingResponse:
+    wid = current_customer_wid(request)
+    if not wid:
+        raise HTTPException(status_code=401, detail="请先绑定手机号")
+
+    coupon_code = code.strip()
+    with db_session() as conn:
+        exists = conn.execute(
+            """
+            SELECT 1
+            FROM coupons
+            WHERE code = ? AND customer_wid = ? AND status != 'voided'
+            """,
+            (coupon_code, wid),
+        ).fetchone()
+        if not exists:
+            raise HTTPException(status_code=404, detail="没有找到该优惠券")
+
+    try:
+        import qrcode
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="二维码组件未安装") from exc
+
+    image = qrcode.make(coupon_code)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="image/png")
 
 
 @app.post("/api/client/logout")
