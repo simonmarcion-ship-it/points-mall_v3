@@ -740,9 +740,15 @@ def bind_phone_with_cargeer(
 app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
 
 
+def frontend_response() -> FileResponse:
+    response = FileResponse(FRONTEND_DIR / "index.html")
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return frontend_response()
 
 
 @app.get("/{path:path}")
@@ -752,4 +758,4 @@ def spa_fallback(path: str) -> FileResponse:
     candidate = FRONTEND_DIR / path
     if candidate.exists() and candidate.is_file():
         return FileResponse(candidate)
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return frontend_response()
