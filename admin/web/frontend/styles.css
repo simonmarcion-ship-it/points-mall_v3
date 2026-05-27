@@ -97,10 +97,66 @@ label.wide { grid-column: span 2; }
 .error { color: #b42318; }
 .ok { color: #027a48; }
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
-  .sidebar { display: flex; overflow-x: auto; gap: 8px; }
-  .sidebar button { width: auto; white-space: nowrap; }
-  .stats { grid-template-columns: repeat(2, 1fr); }
-  .detail-grid, .two-column-layout, .coupon-workspace, .form-grid, .filter-grid, .lookup-item, .store-maintenance-form { grid-template-columns: 1fr; }
+  body { background: #f7f9fc; }
+  .login-view { align-items: start; padding: 18px 12px; }
+  .login-panel { padding: 20px; box-shadow: none; }
+  .topbar { height: auto; min-height: 56px; align-items: flex-start; padding: 10px 12px; gap: 10px; }
+  .topbar h1 { padding-top: 4px; font-size: 16px; }
+  .operator { flex-direction: column; align-items: flex-end; gap: 8px; font-size: 12px; }
+  .identity { display: grid; gap: 3px; justify-items: end; }
+  .operator button { padding: 6px 10px; }
+  .layout { grid-template-columns: 1fr; min-height: auto; }
+  .sidebar { position: sticky; top: 56px; z-index: 2; display: flex; overflow-x: auto; gap: 8px; padding: 8px 10px; border-right: 0; border-bottom: 1px solid #dfe5ef; scrollbar-width: none; }
+  .sidebar::-webkit-scrollbar { display: none; }
+  .sidebar button { flex: 0 0 auto; width: auto; margin: 0; padding: 8px 10px; white-space: nowrap; border-radius: 6px; background: #f3f6fb; }
+  .sidebar button.active { background: #2563eb; color: #fff; }
+  .content { padding: 12px; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .stat { padding: 10px; }
+  .stat .value { font-size: 20px; }
+  .panel { border-radius: 8px; margin-bottom: 12px; }
+  .panel-head { align-items: stretch; flex-direction: column; padding: 12px; }
+  .panel-body { padding: 12px; }
+  .toolbar { width: 100%; display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
+  .toolbar input, .toolbar select { width: 100%; }
+  .toolbar.compact { display: flex; }
+  .detail-grid, .two-column-layout, .coupon-workspace, .form-grid, .filter-grid, .lookup-item, .lookup-item-vehicle, .store-maintenance-form, .store-picker-grid { grid-template-columns: 1fr; }
+  .form-grid { gap: 10px; }
   label.wide { grid-column: span 1; }
+  .wide { grid-column: span 1; }
+  input, select, textarea { width: 100%; min-height: 42px; }
+  button { min-height: 40px; }
+  .actions { display: grid; gap: 8px; }
+  .actions button { width: 100%; }
+  .redeem-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .redeem-actions .danger { grid-column: 1 / -1; }
+  .scanner-panel video { width: 100%; max-height: 68vh; }
+  .pager { justify-content: space-between; gap: 8px; }
+  .pager span { flex: 1; text-align: center; font-size: 12px; }
+  .kv { grid-template-columns: 96px minmax(0, 1fr); word-break: break-word; }
+  .coupon-detail-panel, .coupon-overview-panel { min-height: 0; }
+  .coupon-scroll { max-height: none; overflow: visible; border: 0; }
+  .table-wrap { overflow: visible; }
+  table { display: block; width: 100%; font-size: 13px; }
+  thead { display: none; }
+  tbody { display: grid; gap: 10px; }
+  tr { display: grid; gap: 7px; padding: 12px; border: 1px solid #dfe5ef; border-radius: 8px; background: #fff; }
+  tr:hover td { background: transparent; }
+  td { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 0; border-bottom: 0; word-break: break-word; }
+  td::before { content: attr(data-label); color: #667085; font-weight: 600; }
+  td:not([data-label]) { display: block; }
+  td:not([data-label])::before { content: none; }
+  #customerRows tr td:first-child, #customerCoupons tr td:first-child { font-weight: 700; }
+  .store-maintenance-table, .store-picker-list { max-height: none; }
+  .lookup-results { border-radius: 8px; }
+  .lookup-item { white-space: normal; }
+}
+
+@media (max-width: 420px) {
+  .topbar { display: grid; grid-template-columns: 1fr; }
+  .operator { align-items: stretch; }
+  .identity { justify-items: start; }
+  .toolbar { grid-template-columns: 1fr; }
+  .redeem-actions { grid-template-columns: 1fr; }
+  td { grid-template-columns: 78px minmax(0, 1fr); }
 }

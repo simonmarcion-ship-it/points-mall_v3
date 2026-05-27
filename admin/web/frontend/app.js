@@ -252,19 +252,19 @@ async function searchCustomers(resetPage = true) {
   customerTotal = data.total;
   $('customerRows').innerHTML = data.items.map((row) => `
     <tr class="clickable-row" onclick="selectCustomer('${row.wid}')">
-      <td>${safe(row.wid)}</td>
-      <td>${safe(row.phone)}</td>
-      <td>${safe(row.nickname)}</td>
-      <td>${safe(row.real_name)}</td>
-      <td>${safe(row.vin)}</td>
-      <td>${safe(row.plate_no)}</td>
-      <td>${safe(row.car_series)}</td>
-      <td>${safe(row.store_name)}</td>
-      <td>${safe(row.became_customer_at)}</td>
-      <td>${safe(row.joined_at)}</td>
-      <td>${safe(row.level_name || row.member_card)}</td>
-      <td>${safe(row.available_point)}</td>
-      <td>${safe(row.unused_coupon_count)} / ${safe(row.coupon_count)}</td>
+      <td data-label="wid">${safe(row.wid)}</td>
+      <td data-label="手机号">${safe(row.phone)}</td>
+      <td data-label="昵称">${safe(row.nickname)}</td>
+      <td data-label="姓名">${safe(row.real_name)}</td>
+      <td data-label="车架号">${safe(row.vin)}</td>
+      <td data-label="车牌号">${safe(row.plate_no)}</td>
+      <td data-label="车型">${safe(row.car_series)}</td>
+      <td data-label="归属门店">${safe(row.store_name)}</td>
+      <td data-label="成为客户时间">${safe(row.became_customer_at)}</td>
+      <td data-label="入会时间">${safe(row.joined_at)}</td>
+      <td data-label="等级">${safe(row.level_name || row.member_card)}</td>
+      <td data-label="可用积分">${safe(row.available_point)}</td>
+      <td data-label="可用券">${safe(row.unused_coupon_count)} / ${safe(row.coupon_count)}</td>
     </tr>
   `).join('');
   const totalPages = Math.max(1, Math.ceil(customerTotal / pageSize));
@@ -337,12 +337,12 @@ function renderCustomerCoupons() {
     const originalIndex = selectedCustomerCoupons.indexOf(row);
     return `
     <tr class="clickable-row" title="右键打开操作菜单" onclick="showCouponDetail(${originalIndex})" oncontextmenu="openCouponContextMenu(event, ${originalIndex})">
-      <td>${safe(row.code)}</td>
-      <td>${safe(row.template_name)}</td>
-      <td>${statusTag(normalizeCouponStatus(row), normalizeCouponStatus(row) === 'expired' ? '已过期' : (row.status_text || row.status))}</td>
-      <td>${safe(row.receive_time)}</td>
-      <td>${safe(row.used_time)}</td>
-      <td>${safe(row.valid_period)}</td>
+      <td data-label="券码">${safe(row.code)}</td>
+      <td data-label="名称">${safe(row.template_name)}</td>
+      <td data-label="状态">${statusTag(normalizeCouponStatus(row), normalizeCouponStatus(row) === 'expired' ? '已过期' : (row.status_text || row.status))}</td>
+      <td data-label="领取时间">${safe(row.receive_time)}</td>
+      <td data-label="使用时间">${safe(row.used_time)}</td>
+      <td data-label="有效期">${safe(row.valid_period)}</td>
     </tr>
   `;
   }).join('');
