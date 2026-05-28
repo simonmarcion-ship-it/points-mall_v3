@@ -316,7 +316,7 @@ def role_permissions(role: str) -> dict:
         "can_issue": role in {"admin", "issuer"},
         "can_create_customer": role in {"admin", "issuer"},
         "can_void": role in {"admin", "issuer"},
-        "can_redeem": role in {"admin", "issuer", "redeemer"},
+        "can_redeem": role in {"admin", "redeemer"},
         "can_manage_templates": role in {"admin", "issuer"},
         "can_manage_stores": role == "admin",
     }
@@ -1457,7 +1457,7 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
 
 @app.post("/api/coupons/redeem")
 def redeem_coupon(req: RedeemCouponRequest, request: Request) -> dict:
-    username = require_role(request, {"admin", "issuer", "redeemer"})
+    username = require_role(request, {"admin", "redeemer"})
     code = req.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="请输入券码")
