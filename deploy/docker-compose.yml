@@ -11,6 +11,7 @@ services:
       - ../data:/data
       - ${MALL_CRAWLER_V2_OUTPUT_DIR:-../crawler_v2_output}:/crawler_v2_output:ro
     environment:
+      TZ: Asia/Shanghai
       MALL_ENV: production
       MALL_DATA_DIR: /data
       MALL_DB_PATH: /data/mall.db
@@ -53,6 +54,7 @@ services:
     volumes:
       - ../data:/data
     environment:
+      TZ: Asia/Shanghai
       CLIENT_ENV: production
       CLIENT_DB_PATH: /data/mall.db
       CLIENT_SESSION_COOKIE_NAME: "${CLIENT_SESSION_COOKIE_NAME:-tx_client_session_v3}"

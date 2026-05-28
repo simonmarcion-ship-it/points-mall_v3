@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import secrets
 import time
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
 from fastapi import Request, Response
@@ -27,6 +28,7 @@ from .sms import SmsError, normalize_phone, send_sms_code, verify_sms_code
 
 
 FRONTEND_DIR = WEB_DIR / "frontend"
+APP_TZ = ZoneInfo("Asia/Shanghai")
 
 app = FastAPI(title="积分商城后台 API")
 app.add_middleware(
@@ -176,7 +178,7 @@ async def shutdown_coupon_expiry_task() -> None:
 
 
 def now_text() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(APP_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def get_wechat_access_token() -> str:
@@ -217,7 +219,7 @@ def get_wechat_jsapi_ticket() -> str:
 
 
 def local_id(prefix: str) -> str:
-    return f"{prefix}_{datetime.now():%Y%m%d%H%M%S}_{secrets.token_hex(3).upper()}"
+    return f"{prefix}_{datetime.now(APP_TZ):%Y%m%d%H%M%S}_{secrets.token_hex(3).upper()}"
 
 
 VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
@@ -283,7 +285,7 @@ def current_admin_profile(conn, username: str) -> dict:
                    s.name AS linked_store_name
             FROM admin_users u
             LEFT JOIN stores s ON s.id = u.store_id
-            WHERE u.username = ? AND u.enabled = 1
+            WHERE u.username = ? AND u.enabled = 1 AND u.deleted_at IS NULL
             """,
             (username,),
         ).fetchone()
@@ -490,7 +492,7 @@ def apply_dynamic_coupon_status(coupon: dict) -> dict:
         return coupon
     if coupon.get("status") == "unused":
         valid_end = parse_datetime(coupon.get("valid_end"))
-        if valid_end and valid_end < datetime.now():
+        if valid_end and valid_end < datetime.now(APP_TZ).replace(tzinfo=None):
             coupon = dict(coupon)
             coupon["status"] = "expired"
             coupon["status_text"] = "已过期"
@@ -534,7 +536,7 @@ def expire_coupons_once() -> int:
 
 
 def seconds_until_next_expiry_run() -> float:
-    now = datetime.now()
+    now = datetime.now(APP_TZ).replace(tzinfo=None)
     next_run = (now + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
     if now < now.replace(hour=0, minute=5, second=0, microsecond=0):
         next_run = now.replace(hour=0, minute=5, second=0, microsecond=0)
@@ -649,7 +651,7 @@ def login(req: LoginRequest, response: Response) -> dict:
                 """
                 SELECT *
                 FROM admin_users
-                WHERE username = ? AND enabled = 1
+                WHERE username = ? AND enabled = 1 AND deleted_at IS NULL
                 """,
                 (username,),
             ).fetchone()
@@ -695,7 +697,7 @@ def send_admin_register_sms(req: SendAdminRegisterSmsRequest) -> dict:
         user = row_to_dict(
             conn.execute(
                 """
-                SELECT id, registered_at, enabled
+                SELECT id, registered_at, enabled, deleted_at
                 FROM admin_users
                 WHERE username = ? OR phone = ?
                 """,
@@ -704,6 +706,8 @@ def send_admin_register_sms(req: SendAdminRegisterSmsRequest) -> dict:
         )
         if not user:
             raise HTTPException(status_code=400, detail="该手机号尚未由管理员添加，不能注册")
+        if user.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="该账号已被删除，不能注册")
         if not user.get("enabled"):
             raise HTTPException(status_code=400, detail="该账号已停用，不能注册")
         if user.get("registered_at"):
@@ -742,6 +746,8 @@ def register_admin(req: RegisterAdminRequest, response: Response) -> dict:
         )
         if not user:
             raise HTTPException(status_code=400, detail="该手机号尚未由管理员添加，不能注册")
+        if user.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="该账号已被删除，不能注册")
         if not user.get("enabled"):
             raise HTTPException(status_code=400, detail="该账号已停用，不能注册")
         if user.get("registered_at"):
@@ -1136,9 +1142,9 @@ def admin_users(request: Request) -> dict:
         rows = conn.execute(
             """
             SELECT id, username, display_name, phone, store_id, store_name, role, enabled,
-                   created_at, registered_at, last_login_at
+                   created_at, registered_at, last_login_at, deleted_at
             FROM admin_users
-            ORDER BY enabled DESC, store_name, display_name, phone
+            ORDER BY deleted_at IS NOT NULL, enabled DESC, store_name, display_name, phone
             """
         ).fetchall()
         return {"items": rows_to_dicts(rows)}
@@ -1173,11 +1179,36 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
             raise HTTPException(status_code=400, detail="请选择有效门店")
         existing = row_to_dict(
             conn.execute(
-                "SELECT id FROM admin_users WHERE username = ? OR phone = ?",
+                "SELECT * FROM admin_users WHERE username = ? OR phone = ?",
                 (phone, phone),
             ).fetchone()
         )
         if existing:
+            if existing.get("deleted_at"):
+                conn.execute(
+                    """
+                    UPDATE admin_users
+                    SET username = ?, password_hash = ?, display_name = ?, phone = ?,
+                        store_id = ?, store_name = ?, role = ?, enabled = 1,
+                        registered_at = NULL, last_login_at = NULL, deleted_at = NULL
+                    WHERE id = ?
+                    """,
+                    (
+                        phone,
+                        hash_password(password),
+                        name,
+                        phone,
+                        store["id"],
+                        store["name"],
+                        role,
+                        existing["id"],
+                    ),
+                )
+                return {
+                    "user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (existing["id"],)).fetchone()),
+                    "created": False,
+                    "restored": True,
+                }
             raise HTTPException(status_code=400, detail="该手机号已存在")
 
         user_id = local_id("ADMIN_USER")
@@ -1216,6 +1247,8 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
         user = row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())
         if not user:
             raise HTTPException(status_code=404, detail="人员不存在")
+        if user.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="该人员已被删除")
         if req.role is not None:
             role = req.role.strip()
             if role not in allowed_roles:
@@ -1226,6 +1259,33 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
                 raise HTTPException(status_code=400, detail="不能停用当前登录账号")
             conn.execute("UPDATE admin_users SET enabled = ? WHERE id = ?", (1 if req.enabled else 0, user_id))
         return {"user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())}
+
+
+@app.delete("/api/admin-users/{user_id}")
+def delete_admin_user(user_id: str, request: Request) -> dict:
+    username = require_role(request, {"admin"})
+    with db_session() as conn:
+        user = row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())
+        if not user:
+            raise HTTPException(status_code=404, detail="人员不存在")
+        if user.get("username") == username:
+            raise HTTPException(status_code=400, detail="不能删除当前登录账号")
+        if user.get("role") == "admin":
+            raise HTTPException(status_code=400, detail="管理员账号请直接在数据库维护")
+        if user.get("deleted_at"):
+            return {"user": user, "deleted": False}
+        conn.execute(
+            """
+            UPDATE admin_users
+            SET enabled = 0, registered_at = NULL, last_login_at = NULL, deleted_at = ?
+            WHERE id = ?
+            """,
+            (now_text(), user_id),
+        )
+        return {
+            "user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone()),
+            "deleted": True,
+        }
 
 
 @app.post("/api/stores")
@@ -1362,7 +1422,7 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
         admin_profile = current_admin_profile(conn, username)
         customer = require_customer(conn, req.wid)
         template = require_template(conn, req.template_id)
-        start = datetime.now()
+        start = datetime.now(APP_TZ).replace(tzinfo=None)
         issued_at = now_text()
         if validity_type == "unlimited":
             end = datetime(2099, 1, 1)

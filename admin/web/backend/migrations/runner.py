@@ -18,6 +18,7 @@ MIGRATIONS = [
     Migration("004", "backend.migrations.v004_coupon_void_fields"),
     Migration("005", "backend.migrations.v005_admin_roles"),
     Migration("006", "backend.migrations.v006_admin_user_registration"),
+    Migration("007", "backend.migrations.v007_admin_user_soft_delete"),
 ]
 
 

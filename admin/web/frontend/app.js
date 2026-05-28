@@ -50,6 +50,7 @@ function showApp(username, profile = {}) {
   currentAdminProfile = profile || {};
   const displayName = profile.name || profile.display_name || username;
   $('currentUser').textContent = safe(displayName);
+  $('currentRole').textContent = roleLabel(profile.role);
   $('currentStore').textContent = safe(profile.store_name);
   $('operator').value = displayName || username;
   updateIssueStoreScopeLabels();
@@ -214,6 +215,9 @@ async function registerAdmin(event) {
 window.registerAdmin = registerAdmin;
 window.sendRegisterSmsCode = sendRegisterSmsCode;
 window.selectIssueTemplate = selectIssueTemplate;
+window.startEditCustomerDetail = startEditCustomerDetail;
+window.cancelEditCustomerDetail = cancelEditCustomerDetail;
+window.deleteAdminUser = deleteAdminUser;
 
 function formatDateTime(value) {
   const text = safe(value);
@@ -371,28 +375,48 @@ function renderCustomerDetail(c) {
       .map((option) => `<option value="${html(option.value)}" ${option.value === c.store_name ? 'selected' : ''}>${html(option.textContent)}</option>`)
       .join('');
     $('customerDetail').innerHTML = `
-      <div class="form-grid">
-        <label>客户编号<input id="editCustomerWid" value="${html(c.wid)}" readonly /></label>
-        <label>手机号<input id="editCustomerPhone" value="${html(c.phone)}" inputmode="tel" /></label>
-        <label>昵称<input id="editCustomerNickname" value="${html(c.nickname)}" /></label>
-        <label>客户归属门店<select id="editCustomerStore">${storeOptions}</select></label>
-        <label>等级<input id="editCustomerLevel" value="${html(c.level_name || c.member_card)}" /></label>
-        <label>性别<input id="editCustomerGender" value="${html(c.gender)}" /></label>
-        <label>生日<input id="editCustomerBirthday" type="date" value="${html((c.birthday || '').slice(0, 10))}" /></label>
-        <label>姓名<input id="editCustomerRealName" value="${html(c.real_name)}" /></label>
-        <label>车型车系<input id="editCustomerCarSeries" value="${html(c.car_series)}" /></label>
-        <label>车架号<input id="editCustomerVin" value="${html(c.vin)}" /></label>
-        <label>购买门店<input id="editCustomerPurchaseStore" value="${html(c.purchase_store_name)}" /></label>
-        <label>车牌号<input id="editCustomerPlateNo" value="${html(c.plate_no)}" /></label>
+      <div class="customer-detail-actions">
+        <button type="button" class="secondary" id="editCustomerButton" onclick="startEditCustomerDetail()">编辑</button>
       </div>
-      <div class="actions"><button type="button" onclick="saveCustomerDetail()">保存客户资料</button></div>
-      <p id="editCustomerMessage" class="message"></p>
-      <div class="kv">
+      <div id="customerReadonlyDetail" class="kv">
+        <div class="key">客户编号</div><div>${safe(c.wid)}</div>
+        <div class="key">手机号</div><div>${safe(c.phone)}</div>
+        <div class="key">昵称</div><div>${safe(c.nickname)}</div>
+        <div class="key">客户归属门店</div><div>${safe(c.store_name)}</div>
+        <div class="key">等级</div><div>${safe(c.level_name || c.member_card)}</div>
+        <div class="key">性别</div><div>${formatGender(c.gender)}</div>
+        <div class="key">生日</div><div>${formatDateTime(c.birthday)}</div>
+        <div class="key">姓名</div><div>${safe(c.real_name)}</div>
+        <div class="key">车型车系</div><div>${safe(c.car_series)}</div>
+        <div class="key">车架号</div><div>${formatVin(c.vin)}</div>
+        <div class="key">购买门店</div><div>${safe(c.purchase_store_name)}</div>
+        <div class="key">车牌号</div><div>${safe(c.plate_no)}</div>
         <div class="key">车辆信息状态</div><div>${formatBool(c.vehicle_query_success)} ${safe(c.vehicle_errcode) !== '-' ? `(${safe(c.vehicle_errcode)} ${safe(c.vehicle_errmsg)})` : ''}</div>
         <div class="key">&#25104;&#20026;&#23458;&#25143;&#26102;&#38388;</div><div>${formatDateTime(c.became_customer_at)}</div>
         <div class="key">&#20837;&#20250;&#26102;&#38388;</div><div>${formatDateTime(c.joined_at)}</div>
         <div class="key">&#23458;&#25143;&#29366;&#24577;</div><div>${formatCustomerStatus(c.customer_status)}</div>
         <div class="key">&#40657;&#21517;&#21333;</div><div>${formatBool(c.black_user)}</div>
+      </div>
+      <div id="customerEditDetail" class="hidden">
+        <div class="form-grid">
+          <label>客户编号<input id="editCustomerWid" value="${html(c.wid)}" readonly /></label>
+          <label>手机号<input id="editCustomerPhone" value="${html(c.phone)}" inputmode="tel" /></label>
+          <label>昵称<input id="editCustomerNickname" value="${html(c.nickname)}" /></label>
+          <label>客户归属门店<select id="editCustomerStore">${storeOptions}</select></label>
+          <label>等级<input id="editCustomerLevel" value="${html(c.level_name || c.member_card)}" /></label>
+          <label>性别<input id="editCustomerGender" value="${html(c.gender)}" /></label>
+          <label>生日<input id="editCustomerBirthday" type="date" value="${html((c.birthday || '').slice(0, 10))}" /></label>
+          <label>姓名<input id="editCustomerRealName" value="${html(c.real_name)}" /></label>
+          <label>车型车系<input id="editCustomerCarSeries" value="${html(c.car_series)}" /></label>
+          <label>车架号<input id="editCustomerVin" value="${html(c.vin)}" /></label>
+          <label>购买门店<input id="editCustomerPurchaseStore" value="${html(c.purchase_store_name)}" /></label>
+          <label>车牌号<input id="editCustomerPlateNo" value="${html(c.plate_no)}" /></label>
+        </div>
+        <div class="actions inline-actions">
+          <button type="button" onclick="saveCustomerDetail()">保存</button>
+          <button type="button" class="secondary" onclick="cancelEditCustomerDetail()">取消</button>
+        </div>
+        <p id="editCustomerMessage" class="message"></p>
       </div>
     `;
     return;
@@ -417,6 +441,18 @@ function renderCustomerDetail(c) {
     <div class="key">&#23458;&#25143;&#29366;&#24577;</div><div>${formatCustomerStatus(c.customer_status)}</div>
     <div class="key">&#40657;&#21517;&#21333;</div><div>${formatBool(c.black_user)}</div>
   </div>`;
+}
+
+function startEditCustomerDetail() {
+  $('customerReadonlyDetail').classList.add('hidden');
+  $('customerEditDetail').classList.remove('hidden');
+  $('editCustomerButton').classList.add('hidden');
+}
+
+function cancelEditCustomerDetail() {
+  $('customerEditDetail').classList.add('hidden');
+  $('customerReadonlyDetail').classList.remove('hidden');
+  $('editCustomerButton').classList.remove('hidden');
 }
 
 async function saveCustomerDetail() {
@@ -598,6 +634,7 @@ async function confirmContextCouponVoid() {
       }),
     });
     selectedCustomerCoupons[index] = data.coupon;
+    $('couponStatusFilter').value = '';
     renderCustomerCoupons();
     await loadSummary();
     if (selectedWid) await selectCustomer(selectedWid);
@@ -958,24 +995,39 @@ async function loadStoreMaintenance() {
 async function loadAdminUsers() {
   if (!$('adminUserRows')) return;
   const data = await api('/api/admin-users');
-  $('adminUserRows').innerHTML = (data.items || []).map((row) => `
-    <tr>
-      <td data-label="姓名">${html(row.display_name || row.username)}</td>
-      <td data-label="手机号">${html(row.phone || row.username)}</td>
-      <td data-label="所属门店">${html(row.store_name)}</td>
-      <td data-label="权限">${row.role === 'admin' ? '<span class="tag used">管理员</span>' : `
+  $('adminUserRows').innerHTML = (data.items || []).map((row) => {
+    const deleted = Boolean(row.deleted_at);
+    const statusHtml = deleted
+      ? '<span class="tag voided">已被删除</span>'
+      : (row.enabled ? '<span class="tag unused">启用</span>' : '<span class="tag voided">停用</span>');
+    const registerHtml = deleted
+      ? '<span class="tag voided">已删除</span>'
+      : (row.registered_at ? '<span class="tag used">已注册</span>' : '<span class="tag expired">待注册</span>');
+    const roleHtml = row.role === 'admin'
+      ? '<span class="tag used">管理员</span>'
+      : (deleted ? roleLabel(row.role) : `
         <select onchange="updateAdminUserRole('${safe(row.id)}', this.value)">
           <option value="issuer" ${row.role === 'issuer' || row.role === 'staff' ? 'selected' : ''}>发券人员</option>
           <option value="redeemer" ${row.role === 'redeemer' ? 'selected' : ''}>核销人员</option>
-        </select>`}
-      </td>
-      <td data-label="状态">${row.enabled ? '<span class="tag unused">启用</span>' : '<span class="tag voided">停用</span>'}</td>
-      <td data-label="注册状态">${row.registered_at ? '<span class="tag used">已注册</span>' : '<span class="tag expired">待注册</span>'}</td>
+        </select>`);
+    const actionHtml = deleted
+      ? '<span class="subtle">可用同手机号重新新增</span>'
+      : `<button class="secondary" onclick="toggleAdminUser('${safe(row.id)}', ${row.enabled ? 'false' : 'true'})">${row.enabled ? '停用' : '启用'}</button>
+         <button class="danger" onclick="deleteAdminUser('${safe(row.id)}', '${html(row.display_name || row.phone || row.username)}')">删除</button>`;
+    return `
+    <tr class="${deleted ? 'muted-row' : ''}">
+      <td data-label="姓名">${html(row.display_name || row.username)}</td>
+      <td data-label="手机号">${html(row.phone || row.username)}</td>
+      <td data-label="所属门店">${html(row.store_name)}</td>
+      <td data-label="权限">${roleHtml}</td>
+      <td data-label="状态">${statusHtml}</td>
+      <td data-label="注册状态">${registerHtml}</td>
       <td data-label="注册时间">${html(row.created_at)}</td>
       <td data-label="最近登录">${html(row.last_login_at)}</td>
-      <td data-label="操作"><button class="secondary" onclick="toggleAdminUser('${safe(row.id)}', ${row.enabled ? 'false' : 'true'})">${row.enabled ? '停用' : '启用'}</button></td>
+      <td data-label="操作" class="row-actions">${actionHtml}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 async function createAdminUser() {
@@ -1017,6 +1069,16 @@ async function toggleAdminUser(userId, enabled) {
   await api('/api/admin-users/' + encodeURIComponent(userId), {
     method: 'PATCH',
     body: JSON.stringify({ enabled }),
+  });
+  await loadAdminUsers();
+}
+
+async function deleteAdminUser(userId, name) {
+  if (!window.confirm(`确定删除客服人员「${name || userId}」吗？\n\n删除后该人员将失去账号，不能登录；以后可以用同一手机号重新新增。`)) {
+    return;
+  }
+  await api('/api/admin-users/' + encodeURIComponent(userId), {
+    method: 'DELETE',
   });
   await loadAdminUsers();
 }
