@@ -213,6 +213,7 @@ async function registerAdmin(event) {
 
 window.registerAdmin = registerAdmin;
 window.sendRegisterSmsCode = sendRegisterSmsCode;
+window.selectIssueTemplate = selectIssueTemplate;
 
 function formatDateTime(value) {
   const text = safe(value);
@@ -831,18 +832,40 @@ function issueTemplateOptionText(row) {
 }
 
 function renderIssueTemplateOptions(filterText = '') {
-  const list = $('issueTemplateOptions');
-  if (!list) return;
+  const box = $('issueTemplateOptions');
+  if (!box) return;
   const keyword = filterText.trim().toLowerCase();
   const rows = issueTemplateRows.filter((row) => {
     if (!keyword) return true;
     return [row.name, row.coupon_type, row.rule_text, row.id].some((value) => (
       String(value || '').toLowerCase().includes(keyword)
     ));
-  });
-  list.innerHTML = rows.map((row) => (
-    `<option value="${html(issueTemplateOptionText(row))}" label="${html(row.rule_text || '')}"></option>`
+  }).slice(0, 20);
+  if (!rows.length) {
+    box.classList.remove('hidden');
+    box.innerHTML = '<div class="lookup-empty">没有匹配的券模板</div>';
+    return;
+  }
+  box.classList.remove('hidden');
+  box.innerHTML = rows.map((row) => (
+    `<button type="button" class="template-option" onclick="selectIssueTemplate('${safe(row.id)}')">
+      <span class="template-option-title">${html(issueTemplateOptionText(row))}</span>
+      <span class="template-option-rule">${html(row.rule_text || '暂无使用规则')}</span>
+    </button>`
   )).join('');
+}
+
+function closeIssueTemplateOptions() {
+  const box = $('issueTemplateOptions');
+  if (box) box.classList.add('hidden');
+}
+
+function selectIssueTemplate(templateId) {
+  const select = $('issueTemplate');
+  if (!select) return;
+  select.value = templateId;
+  syncIssueTemplateDisplay();
+  closeIssueTemplateOptions();
 }
 
 function selectedIssueTemplate() {
@@ -1540,6 +1563,11 @@ document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListen
 
 document.addEventListener('click', (event) => {
   if (!$('couponContextMenu').contains(event.target)) closeCouponContextMenu();
+  const templateBox = $('issueTemplateOptions');
+  const templateInput = $('issueTemplateSearch');
+  if (templateBox && templateInput && !templateBox.contains(event.target) && event.target !== templateInput) {
+    closeIssueTemplateOptions();
+  }
 });
 
 async function bootstrapApp() {
@@ -1569,6 +1597,9 @@ async function init() {
   });
   $('issueTemplateSearch').addEventListener('input', syncIssueTemplateFromSearch);
   $('issueTemplateSearch').addEventListener('change', syncIssueTemplateFromSearch);
+  $('issueTemplateSearch').addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeIssueTemplateOptions();
+  });
   $('newCustomerPhone').addEventListener('input', scheduleNewCustomerCargeerLookup);
   $('newCustomerPhone').addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {

@@ -212,8 +212,8 @@
               <label>客户归属门店<input id="issueStore" placeholder="自动填充" readonly /></label>
               <label>等级<input id="issueLevel" placeholder="自动填充" readonly /></label>
               <label class="wide">券模板
-                <input id="issueTemplateSearch" list="issueTemplateOptions" placeholder="选择或输入关键词搜索券模板" autocomplete="off" />
-                <datalist id="issueTemplateOptions"></datalist>
+                <input id="issueTemplateSearch" placeholder="选择或输入关键词搜索券模板" autocomplete="off" />
+                <div id="issueTemplateOptions" class="template-options hidden"></div>
                 <select id="issueTemplate" class="hidden"></select>
                 <div id="issueTemplateRule" class="template-rule subtle">请选择券模板后查看使用规则</div>
               </label>
@@ -306,6 +306,6 @@
     <button type="button" class="danger" data-permission="can_void" onclick="confirmContextCouponVoid()">作废</button>
   </div>
   <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-  <script src="assets/app.js?v=20260528-admin-staff-register"></script>
+  <script src="assets/app.js?v=20260528-template-custom-dropdown"></script>
 </body>
 </html>

@@ -48,6 +48,12 @@ tr.clickable-row { cursor: pointer; }
 .pager { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 14px; color: #667085; font-size: 13px; }
 .subtle { color: #667085; font-size: 12px; margin-bottom: 8px; }
 .template-rule { margin: 0; padding: 8px 10px; border: 1px solid #edf1f6; border-radius: 6px; background: #f8fafc; line-height: 1.5; }
+.template-options { max-height: 260px; overflow-y: auto; border: 1px solid #cfd8e6; border-radius: 6px; background: #fff; box-shadow: 0 10px 22px rgba(15, 23, 42, .12); }
+.template-option { width: 100%; display: grid; gap: 4px; padding: 9px 10px; border-radius: 0; border-bottom: 1px solid #edf1f6; background: #fff; color: #1f2937; text-align: left; white-space: normal; }
+.template-option:last-child { border-bottom: 0; }
+.template-option:hover { background: #f8fbff; color: #1d4ed8; }
+.template-option-title { font-weight: 600; }
+.template-option-rule { color: #667085; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .two-column-layout { display: grid; grid-template-columns: minmax(320px, .8fr) minmax(620px, 1.4fr); gap: 16px; align-items: start; }
 .coupon-workspace { display: grid; grid-template-columns: minmax(360px, .9fr) minmax(560px, 1.4fr); gap: 16px; align-items: start; }

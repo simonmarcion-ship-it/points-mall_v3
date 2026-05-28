@@ -659,7 +659,9 @@ def login(req: LoginRequest, response: Response) -> dict:
                 raise HTTPException(status_code=403, detail="请先用手机号验证码完成注册")
             conn.execute("UPDATE admin_users SET last_login_at = ? WHERE username = ?", (now_text(), username))
             set_session_cookie(response, username)
-            return {"username": username, "profile": current_admin_profile(conn, username)}
+            profile = current_admin_profile(conn, username)
+            profile["permissions"] = role_permissions(profile.get("role") or "issuer")
+            return {"username": username, "profile": profile}
 
     if authenticate(username, req.password):
         set_session_cookie(response, username)
