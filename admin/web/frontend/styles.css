@@ -4,6 +4,7 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "M
 .login-panel { width: min(380px, 100%); background: #fff; border: 1px solid #dfe5ef; border-radius: 8px; padding: 24px; display: grid; gap: 16px; box-shadow: 0 12px 30px rgba(15, 23, 42, .08); }
 .login-panel h1 { margin-bottom: 4px; }
 .login-panel button { width: 100%; }
+.sms-row { display: grid; grid-template-columns: 1fr 112px; gap: 8px; align-items: end; }
 .topbar { height: 56px; background: #fff; border-bottom: 1px solid #dfe5ef; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; position: sticky; top: 0; z-index: 2; }
 h1 { font-size: 18px; margin: 0; font-weight: 700; }
 .operator { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #5b6472; }
@@ -46,6 +47,7 @@ tr:hover td { background: #f8fbff; }
 tr.clickable-row { cursor: pointer; }
 .pager { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 14px; color: #667085; font-size: 13px; }
 .subtle { color: #667085; font-size: 12px; margin-bottom: 8px; }
+.template-rule { margin: 0; padding: 8px 10px; border: 1px solid #edf1f6; border-radius: 6px; background: #f8fafc; line-height: 1.5; }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .two-column-layout { display: grid; grid-template-columns: minmax(320px, .8fr) minmax(620px, 1.4fr); gap: 16px; align-items: start; }
 .coupon-workspace { display: grid; grid-template-columns: minmax(360px, .9fr) minmax(560px, 1.4fr); gap: 16px; align-items: start; }
@@ -100,6 +102,7 @@ label.wide { grid-column: span 2; }
   body { background: #f7f9fc; }
   .login-view { align-items: start; padding: 18px 12px; }
   .login-panel { padding: 20px; box-shadow: none; }
+  .sms-row { grid-template-columns: 1fr; }
   .topbar { height: auto; min-height: 56px; align-items: flex-start; padding: 10px 12px; gap: 10px; }
   .topbar h1 { padding-top: 4px; font-size: 16px; }
   .operator { flex-direction: column; align-items: flex-end; gap: 8px; font-size: 12px; }

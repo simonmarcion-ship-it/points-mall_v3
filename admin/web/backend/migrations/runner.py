@@ -16,6 +16,8 @@ MIGRATIONS = [
     Migration("002", "backend.migrations.v002_wechat_bindings"),
     Migration("003", "backend.migrations.v003_customer_vehicle_fields"),
     Migration("004", "backend.migrations.v004_coupon_void_fields"),
+    Migration("005", "backend.migrations.v005_admin_roles"),
+    Migration("006", "backend.migrations.v006_admin_user_registration"),
 ]
 
 

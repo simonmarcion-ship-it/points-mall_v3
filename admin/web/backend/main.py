@@ -20,9 +20,10 @@ import requests
 
 from .auth import authenticate, clear_session_cookie, current_username, hash_password, require_login, set_session_cookie, verify_password
 from .cargeer import lookup_cargeer_options_by_phone
-from .config import ADMIN_REGISTER_INVITE_CODE, AUTO_IMPORT, DB_PATH, WEB_DIR, WECHAT_APPID, WECHAT_APPSECRET
+from .config import AUTO_IMPORT, DB_PATH, WEB_DIR, WECHAT_APPID, WECHAT_APPSECRET
 from .database import db_session, row_to_dict, rows_to_dicts
 from .schema import create_schema
+from .sms import SmsError, normalize_phone, send_sms_code, verify_sms_code
 
 
 FRONTEND_DIR = WEB_DIR / "frontend"
@@ -73,10 +74,11 @@ class LoginRequest(BaseModel):
 
 class RegisterAdminRequest(BaseModel):
     phone: str
-    name: str
-    store_id: str
-    password: str
-    invite_code: str
+    sms_code: str
+
+
+class SendAdminRegisterSmsRequest(BaseModel):
+    phone: str
 
 
 class CreateCustomerRequest(BaseModel):
@@ -94,10 +96,31 @@ class CreateCustomerRequest(BaseModel):
     remark: str = ""
 
 
+class UpdateCustomerRequest(BaseModel):
+    phone: str | None = None
+    nickname: str | None = None
+    store_name: str | None = None
+    level_name: str | None = None
+    birthday: str | None = None
+    gender: str | None = None
+    real_name: str | None = None
+    car_series: str | None = None
+    vin: str | None = None
+    purchase_store_name: str | None = None
+    plate_no: str | None = None
+
+
 class CreateTemplateRequest(BaseModel):
     name: str
     coupon_type: str = "通用券"
     rule_text: str = ""
+
+
+class UpdateTemplateRequest(BaseModel):
+    name: str | None = None
+    coupon_type: str | None = None
+    rule_text: str | None = None
+    enabled: bool | None = None
 
 
 class CreateStoreRequest(BaseModel):
@@ -107,6 +130,19 @@ class CreateStoreRequest(BaseModel):
 
 class UpdateStoreRequest(BaseModel):
     enabled: bool | None = None
+
+
+class UpdateAdminUserRequest(BaseModel):
+    role: str | None = None
+    enabled: bool | None = None
+
+
+class CreateAdminUserRequest(BaseModel):
+    phone: str
+    name: str
+    store_id: str
+    role: str
+    password: str
 
 
 class ClientLookupRequest(BaseModel):
@@ -191,7 +227,7 @@ def normalize_vin(value: str) -> str:
     return re.sub(r"\s+", "", value or "").upper()
 
 
-def validate_new_customer_vin(conn, vin: str) -> str:
+def validate_customer_vin(conn, vin: str, current_wid: str = "") -> str:
     normalized = normalize_vin(vin)
     if not normalized:
         return ""
@@ -204,9 +240,10 @@ def validate_new_customer_vin(conn, vin: str) -> str:
             SELECT wid, phone, nickname, real_name, vin
             FROM customers
             WHERE UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+              AND wid != ?
             LIMIT 1
             """,
-            (normalized,),
+            (normalized, current_wid),
         ).fetchone()
     )
     if existing:
@@ -215,6 +252,26 @@ def validate_new_customer_vin(conn, vin: str) -> str:
             status_code=400,
             detail=f"车架号已存在：{normalized}，客户 {name}，手机号 {existing.get('phone') or '-'}，WID {existing.get('wid')}",
         )
+    return normalized
+
+
+def validate_new_customer_vin(conn, vin: str) -> str:
+    return validate_customer_vin(conn, vin)
+
+
+def validate_customer_phone_unique(conn, phone: str, current_wid: str = "") -> str:
+    normalized = re.sub(r"\D+", "", phone or "")
+    if not re.fullmatch(r"1[3-9]\d{9}", normalized):
+        raise HTTPException(status_code=400, detail="请输入正确的手机号")
+    existing = row_to_dict(
+        conn.execute(
+            "SELECT wid, nickname, real_name FROM customers WHERE phone = ? AND wid != ? LIMIT 1",
+            (normalized, current_wid),
+        ).fetchone()
+    )
+    if existing:
+        name = existing.get("real_name") or existing.get("nickname") or "-"
+        raise HTTPException(status_code=400, detail=f"手机号已存在：客户 {name}，WID {existing.get('wid')}")
     return normalized
 
 
@@ -246,6 +303,32 @@ def current_admin_profile(conn, username: str) -> dict:
         "store_name": None,
         "role": "admin",
     }
+
+
+def admin_role(conn, username: str) -> str:
+    return current_admin_profile(conn, username).get("role") or "issuer"
+
+
+def role_permissions(role: str) -> dict:
+    role = role or "issuer"
+    return {
+        "can_admin_users": role == "admin",
+        "can_issue": role in {"admin", "issuer"},
+        "can_create_customer": role in {"admin", "issuer"},
+        "can_void": role in {"admin", "issuer"},
+        "can_redeem": role in {"admin", "issuer", "redeemer"},
+        "can_manage_templates": role in {"admin", "issuer"},
+        "can_manage_stores": role == "admin",
+    }
+
+
+def require_role(request: Request, allowed_roles: set[str]) -> str:
+    username = require_login(request)
+    with db_session() as conn:
+        role = admin_role(conn, username)
+    if role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="当前账号没有该操作权限")
+    return username
 
 
 def join_text(values: list[str]) -> str:
@@ -572,13 +655,23 @@ def login(req: LoginRequest, response: Response) -> dict:
             ).fetchone()
         )
         if user and verify_password(req.password, user.get("password_hash")):
+            if user.get("role") != "admin" and not user.get("registered_at"):
+                raise HTTPException(status_code=403, detail="请先用手机号验证码完成注册")
             conn.execute("UPDATE admin_users SET last_login_at = ? WHERE username = ?", (now_text(), username))
             set_session_cookie(response, username)
             return {"username": username, "profile": current_admin_profile(conn, username)}
 
     if authenticate(username, req.password):
         set_session_cookie(response, username)
-        return {"username": username}
+        profile = {
+            "user_id": username,
+            "name": username,
+            "store_id": None,
+            "store_name": "",
+            "role": "admin",
+        }
+        profile["permissions"] = role_permissions("admin")
+        return {"username": username, "profile": profile}
 
     raise HTTPException(status_code=401, detail="用户名或密码错误")
 
@@ -589,70 +682,80 @@ def register_options() -> dict:
         return {"stores": usable_store_rows(conn)}
 
 
-@app.post("/api/auth/register")
-def register_admin(req: RegisterAdminRequest) -> dict:
-    phone = re.sub(r"\D+", "", req.phone or "")
-    name = req.name.strip()
-    password = req.password.strip()
-    if req.invite_code.strip() != ADMIN_REGISTER_INVITE_CODE:
-        raise HTTPException(status_code=400, detail="邀请码不正确")
-    if not re.fullmatch(r"1[3-9]\d{9}", phone):
-        raise HTTPException(status_code=400, detail="请输入正确的手机号")
-    if not name:
-        raise HTTPException(status_code=400, detail="请输入姓名")
-    if len(password) < 6:
-        raise HTTPException(status_code=400, detail="密码至少 6 位")
+@app.post("/api/auth/register-sms/send")
+def send_admin_register_sms(req: SendAdminRegisterSmsRequest) -> dict:
+    try:
+        phone = normalize_phone(req.phone)
+    except SmsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     with db_session() as conn:
-        store = row_to_dict(
+        user = row_to_dict(
             conn.execute(
-                "SELECT id, name FROM stores WHERE id = ? AND enabled = 1",
-                (req.store_id.strip(),),
-            ).fetchone()
-        )
-        if not store:
-            raise HTTPException(status_code=400, detail="请选择有效门店")
-        existing = row_to_dict(
-            conn.execute(
-                "SELECT id FROM admin_users WHERE username = ? OR phone = ?",
+                """
+                SELECT id, registered_at, enabled
+                FROM admin_users
+                WHERE username = ? OR phone = ?
+                """,
                 (phone, phone),
             ).fetchone()
         )
-        if existing:
-            raise HTTPException(status_code=400, detail="该手机号已注册")
+        if not user:
+            raise HTTPException(status_code=400, detail="该手机号尚未由管理员添加，不能注册")
+        if not user.get("enabled"):
+            raise HTTPException(status_code=400, detail="该账号已停用，不能注册")
+        if user.get("registered_at"):
+            raise HTTPException(status_code=400, detail="该手机号已注册，请直接登录")
 
-        user_id = local_id("ADMIN_USER")
-        while conn.execute("SELECT 1 FROM admin_users WHERE id = ?", (user_id,)).fetchone():
-            user_id = local_id("ADMIN_USER")
-        conn.execute(
-            """
-            INSERT INTO admin_users (
-                id, username, password_hash, display_name, phone, store_id, store_name,
-                role, enabled, created_at, last_login_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'staff', 1, ?, NULL)
-            """,
-            (
-                user_id,
-                phone,
-                hash_password(password),
-                name,
-                phone,
-                store["id"],
-                store["name"],
-                now_text(),
-            ),
+    try:
+        send_sms_code(phone)
+    except SmsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/api/auth/register")
+def register_admin(req: RegisterAdminRequest, response: Response) -> dict:
+    try:
+        phone = normalize_phone(req.phone)
+    except SmsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        if not verify_sms_code(phone, req.sms_code):
+            raise HTTPException(status_code=400, detail="验证码错误或已过期")
+    except SmsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with db_session() as conn:
+        user = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM admin_users
+                WHERE username = ? OR phone = ?
+                """,
+                (phone, phone),
+            ).fetchone()
         )
-        return {
-            "ok": True,
-            "username": phone,
-            "profile": {
-                "user_id": user_id,
-                "name": name,
-                "store_id": store["id"],
-                "store_name": store["name"],
-                "role": "staff",
-            },
-        }
+        if not user:
+            raise HTTPException(status_code=400, detail="该手机号尚未由管理员添加，不能注册")
+        if not user.get("enabled"):
+            raise HTTPException(status_code=400, detail="该账号已停用，不能注册")
+        if user.get("registered_at"):
+            raise HTTPException(status_code=400, detail="该手机号已注册，请直接登录")
+        if not user.get("password_hash"):
+            raise HTTPException(status_code=400, detail="管理员尚未设置登录密码")
+
+        now = now_text()
+        conn.execute(
+            "UPDATE admin_users SET registered_at = ?, last_login_at = ? WHERE id = ?",
+            (now, now, user["id"]),
+        )
+        set_session_cookie(response, user["username"])
+        profile = current_admin_profile(conn, user["username"])
+        profile["permissions"] = role_permissions(profile.get("role") or "issuer")
+        return {"ok": True, "username": user["username"], "profile": profile}
 
 
 @app.post("/api/auth/logout")
@@ -667,7 +770,9 @@ def me(request: Request) -> dict:
     if not username:
         raise HTTPException(status_code=401, detail="请先登录")
     with db_session() as conn:
-        return {"username": username, "profile": current_admin_profile(conn, username)}
+        profile = current_admin_profile(conn, username)
+        profile["permissions"] = role_permissions(profile.get("role") or "issuer")
+        return {"username": username, "profile": profile}
 
 
 @app.get("/api/summary")
@@ -806,9 +911,64 @@ def customer_detail(wid: str, request: Request) -> dict:
         return {"customer": customer, "coupons": coupons}
 
 
+@app.patch("/api/customers/{wid}")
+def update_customer(wid: str, req: UpdateCustomerRequest, request: Request) -> dict:
+    operator = require_role(request, {"admin", "issuer"})
+    with db_session() as conn:
+        customer = require_customer(conn, wid)
+        updates = []
+        params = []
+
+        if req.phone is not None:
+            updates.append("phone = ?")
+            params.append(validate_customer_phone_unique(conn, req.phone, wid))
+        if req.nickname is not None:
+            updates.append("nickname = ?")
+            params.append(req.nickname.strip())
+        if req.store_name is not None:
+            updates.append("store_name = ?")
+            params.append(require_enabled_store(conn, req.store_name))
+        if req.level_name is not None:
+            updates.append("level_name = ?")
+            params.append(req.level_name.strip())
+        if req.birthday is not None:
+            updates.append("birthday = ?")
+            params.append(req.birthday.strip())
+        if req.gender is not None:
+            updates.append("gender = ?")
+            params.append(req.gender.strip())
+        if req.real_name is not None:
+            updates.append("real_name = ?")
+            params.append(req.real_name.strip())
+        if req.car_series is not None:
+            updates.append("car_series = ?")
+            params.append(req.car_series.strip())
+        if req.vin is not None:
+            updates.append("vin = ?")
+            params.append(validate_customer_vin(conn, req.vin, wid))
+        if req.purchase_store_name is not None:
+            updates.append("purchase_store_name = ?")
+            params.append(req.purchase_store_name.strip())
+        if req.plate_no is not None:
+            updates.append("plate_no = ?")
+            params.append(req.plate_no.strip())
+
+        if updates:
+            params.append(wid)
+            conn.execute(f"UPDATE customers SET {', '.join(updates)} WHERE wid = ?", params)
+            conn.execute(
+                """
+                INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
+                VALUES (?, ?, '修改客户资料', ?, ?, 1, ?)
+                """,
+                (now_text(), operator, wid, customer.get("phone"), "后台手动修改"),
+            )
+        return {"customer": require_customer(conn, wid)}
+
+
 @app.post("/api/customers")
 def create_customer(req: CreateCustomerRequest, request: Request) -> dict:
-    operator = require_login(request)
+    operator = require_role(request, {"admin", "issuer"})
     phone = req.phone.strip()
     if not phone:
         raise HTTPException(status_code=400, detail="请输入手机号")
@@ -899,17 +1059,40 @@ def customer_lookup(request: Request, q: str, limit: int = 10) -> dict:
     with db_session() as conn:
         rows = conn.execute(
             """
-            SELECT wid, phone, nickname, store_name, level_name, member_card,
+            SELECT wid, phone, nickname, real_name, vin, plate_no, store_name, level_name, member_card,
                    available_point, total_point, customer_status
             FROM customers
-            WHERE phone LIKE ? OR wid LIKE ? OR nickname LIKE ?
+            WHERE phone LIKE ?
+               OR wid LIKE ?
+               OR nickname LIKE ?
+               OR real_name LIKE ?
+               OR vin LIKE ?
+               OR plate_no LIKE ?
             ORDER BY
-                CASE WHEN phone = ? THEN 0 WHEN wid = ? THEN 1 ELSE 2 END,
+                CASE
+                    WHEN phone = ? THEN 0
+                    WHEN wid = ? THEN 1
+                    WHEN vin = ? THEN 2
+                    WHEN plate_no = ? THEN 3
+                    ELSE 4
+                END,
                 became_customer_at DESC,
                 wid DESC
             LIMIT ?
             """,
-            (keyword, keyword, keyword, keyword_text, keyword_text, limit),
+            (
+                keyword,
+                keyword,
+                keyword,
+                keyword,
+                keyword,
+                keyword,
+                keyword_text,
+                keyword_text,
+                normalize_vin(keyword_text),
+                keyword_text,
+                limit,
+            ),
         ).fetchall()
         return {"items": rows_to_dicts(rows)}
 
@@ -946,11 +1129,12 @@ def stores_all(request: Request) -> dict:
 
 @app.get("/api/admin-users")
 def admin_users(request: Request) -> dict:
-    require_login(request)
+    require_role(request, {"admin"})
     with db_session() as conn:
         rows = conn.execute(
             """
-            SELECT id, username, display_name, phone, store_name, role, enabled, created_at, last_login_at
+            SELECT id, username, display_name, phone, store_id, store_name, role, enabled,
+                   created_at, registered_at, last_login_at
             FROM admin_users
             ORDER BY enabled DESC, store_name, display_name, phone
             """
@@ -958,9 +1142,93 @@ def admin_users(request: Request) -> dict:
         return {"items": rows_to_dicts(rows)}
 
 
+@app.post("/api/admin-users")
+def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
+    require_role(request, {"admin"})
+    allowed_roles = {"issuer", "redeemer"}
+    try:
+        phone = normalize_phone(req.phone)
+    except SmsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    name = req.name.strip()
+    password = req.password.strip()
+    role = req.role.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="请输入姓名")
+    if role not in allowed_roles:
+        raise HTTPException(status_code=400, detail="只能新增发券人员或核销人员")
+    if len(password) < 5:
+        raise HTTPException(status_code=400, detail="密码至少 5 位")
+
+    with db_session() as conn:
+        store = row_to_dict(
+            conn.execute(
+                "SELECT id, name FROM stores WHERE id = ? AND enabled = 1",
+                (req.store_id.strip(),),
+            ).fetchone()
+        )
+        if not store:
+            raise HTTPException(status_code=400, detail="请选择有效门店")
+        existing = row_to_dict(
+            conn.execute(
+                "SELECT id FROM admin_users WHERE username = ? OR phone = ?",
+                (phone, phone),
+            ).fetchone()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="该手机号已存在")
+
+        user_id = local_id("ADMIN_USER")
+        while conn.execute("SELECT 1 FROM admin_users WHERE id = ?", (user_id,)).fetchone():
+            user_id = local_id("ADMIN_USER")
+        conn.execute(
+            """
+            INSERT INTO admin_users (
+                id, username, password_hash, display_name, phone, store_id, store_name,
+                role, enabled, created_at, registered_at, last_login_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL)
+            """,
+            (
+                user_id,
+                phone,
+                hash_password(password),
+                name,
+                phone,
+                store["id"],
+                store["name"],
+                role,
+                now_text(),
+            ),
+        )
+        return {
+            "user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone()),
+            "created": True,
+        }
+
+
+@app.patch("/api/admin-users/{user_id}")
+def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Request) -> dict:
+    username = require_role(request, {"admin"})
+    allowed_roles = {"issuer", "redeemer"}
+    with db_session() as conn:
+        user = row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())
+        if not user:
+            raise HTTPException(status_code=404, detail="人员不存在")
+        if req.role is not None:
+            role = req.role.strip()
+            if role not in allowed_roles:
+                raise HTTPException(status_code=400, detail="管理员权限请直接在数据库维护")
+            conn.execute("UPDATE admin_users SET role = ? WHERE id = ?", (role, user_id))
+        if req.enabled is not None:
+            if user.get("username") == username and not req.enabled:
+                raise HTTPException(status_code=400, detail="不能停用当前登录账号")
+            conn.execute("UPDATE admin_users SET enabled = ? WHERE id = ?", (1 if req.enabled else 0, user_id))
+        return {"user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())}
+
+
 @app.post("/api/stores")
 def create_store(req: CreateStoreRequest, request: Request) -> dict:
-    require_login(request)
+    require_role(request, {"admin"})
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="请输入门店名称")
@@ -986,7 +1254,7 @@ def create_store(req: CreateStoreRequest, request: Request) -> dict:
 
 @app.patch("/api/stores/{store_id}")
 def update_store(store_id: str, req: UpdateStoreRequest, request: Request) -> dict:
-    require_login(request)
+    require_role(request, {"admin"})
     with db_session() as conn:
         store = row_to_dict(conn.execute("SELECT * FROM stores WHERE id = ?", (store_id,)).fetchone())
         if not store:
@@ -1008,7 +1276,7 @@ def templates(request: Request) -> dict:
 
 @app.post("/api/templates")
 def create_template(req: CreateTemplateRequest, request: Request) -> dict:
-    operator = require_login(request)
+    operator = require_role(request, {"admin", "issuer"})
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="请输入券模板名称")
@@ -1040,9 +1308,46 @@ def create_template(req: CreateTemplateRequest, request: Request) -> dict:
         return {"template": template}
 
 
+@app.patch("/api/templates/{template_id}")
+def update_template(template_id: str, req: UpdateTemplateRequest, request: Request) -> dict:
+    operator = require_role(request, {"admin", "issuer"})
+    with db_session() as conn:
+        template = row_to_dict(conn.execute("SELECT * FROM coupon_templates WHERE id = ?", (template_id,)).fetchone())
+        if not template:
+            raise HTTPException(status_code=404, detail="券模板不存在")
+        updates = []
+        params = []
+        if req.name is not None:
+            name = req.name.strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="请输入券模板名称")
+            updates.append("name = ?")
+            params.append(name)
+        if req.coupon_type is not None:
+            updates.append("coupon_type = ?")
+            params.append(req.coupon_type.strip() or "通用券")
+        if req.rule_text is not None:
+            updates.append("rule_text = ?")
+            params.append(req.rule_text.strip())
+        if req.enabled is not None:
+            updates.append("enabled = ?")
+            params.append(1 if req.enabled else 0)
+        if updates:
+            params.append(template_id)
+            conn.execute(f"UPDATE coupon_templates SET {', '.join(updates)} WHERE id = ?", params)
+            conn.execute(
+                """
+                INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
+                VALUES (?, ?, '修改券模板', NULL, ?, 1, ?)
+                """,
+                (now_text(), operator, template_id, req.rule_text or ""),
+            )
+        return {"template": row_to_dict(conn.execute("SELECT * FROM coupon_templates WHERE id = ?", (template_id,)).fetchone())}
+
+
 @app.post("/api/coupons/issue")
 def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
-    username = require_login(request)
+    username = require_role(request, {"admin", "issuer"})
     if req.quantity < 1 or req.quantity > 100:
         raise HTTPException(status_code=400, detail="发券数量必须在 1-100 之间")
     validity_type = (req.validity_type or "days").strip()
@@ -1150,7 +1455,7 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
 
 @app.post("/api/coupons/redeem")
 def redeem_coupon(req: RedeemCouponRequest, request: Request) -> dict:
-    username = require_login(request)
+    username = require_role(request, {"admin", "issuer", "redeemer"})
     code = req.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="请输入券码")
@@ -1245,7 +1550,7 @@ def coupon_preview(code: str, request: Request) -> dict:
 
 @app.post("/api/coupons/void")
 def void_coupon(req: VoidCouponRequest, request: Request) -> dict:
-    username = require_login(request)
+    username = require_role(request, {"admin", "issuer"})
     code = req.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="请输入券码")

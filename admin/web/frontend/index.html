@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>积分商城后台</title>
-  <link rel="stylesheet" href="assets/styles.css?v=20260527-mobile-admin" />
+  <link rel="stylesheet" href="assets/styles.css?v=20260528-admin-staff-register" />
 </head>
 <body>
   <section id="loginView" class="login-view hidden">
@@ -19,10 +19,10 @@
     <form id="registerPanel" class="login-panel hidden" onsubmit="registerAdmin(event)">
       <h1>注册后台人员</h1>
       <label>手机号<input id="registerPhone" inputmode="tel" autocomplete="tel" /></label>
-      <label>姓名<input id="registerName" autocomplete="name" /></label>
-      <label>所属门店<select id="registerStore"></select></label>
-      <label>登录密码<input id="registerPassword" type="password" autocomplete="new-password" /></label>
-      <label>邀请码<input id="registerInviteCode" type="password" /></label>
+      <div class="sms-row">
+        <label>验证码<input id="registerSmsCode" inputmode="numeric" autocomplete="one-time-code" /></label>
+        <button id="registerSmsButton" type="button" class="secondary" onclick="sendRegisterSmsCode()">获取验证码</button>
+      </div>
       <button type="submit">提交注册</button>
       <button type="button" class="secondary" onclick="showLoginPanel()">返回登录</button>
       <p id="registerMessage" class="message"></p>
@@ -44,12 +44,12 @@
   <main class="layout">
     <nav class="sidebar">
       <button class="active" data-view="customers">客户管理</button>
-      <button data-view="new-customer">新增客户</button>
-      <button data-view="stores">门店维护</button>
-      <button data-view="admin-users">客服人员维护</button>
-      <button data-view="issue">发券</button>
-      <button data-view="redeem">核销</button>
-      <button data-view="templates">券模板</button>
+      <button data-view="new-customer" data-permission="can_create_customer">新增客户</button>
+      <button data-view="stores" data-permission="can_manage_stores">门店维护</button>
+      <button data-view="admin-users" data-permission="can_admin_users">客服人员维护</button>
+      <button data-view="issue" data-permission="can_issue">发券</button>
+      <button data-view="redeem" data-permission="can_redeem">核销</button>
+      <button data-view="templates" data-permission="can_manage_templates">券模板</button>
       <button data-view="logs">操作记录</button>
     </nav>
     <section class="content">
@@ -156,9 +156,20 @@
             <div class="panel-title">客服人员维护</div>
             <button class="secondary" onclick="loadAdminUsers()">刷新</button>
           </div>
+          <div class="panel-body">
+            <div class="form-grid">
+              <label>手机号<input id="newAdminPhone" inputmode="tel" placeholder="用于注册和登录" /></label>
+              <label>姓名<input id="newAdminName" placeholder="客服姓名" /></label>
+              <label>所属门店<select id="newAdminStore"></select></label>
+              <label>权限<select id="newAdminRole"><option value="issuer">发券人员</option><option value="redeemer">核销人员</option></select></label>
+              <label>初始密码<input id="newAdminPassword" type="password" autocomplete="new-password" placeholder="至少 5 位" /></label>
+            </div>
+            <div class="actions"><button type="button" onclick="createAdminUser()">新增客服人员</button></div>
+            <p id="newAdminMessage" class="message"></p>
+          </div>
           <div class="panel-body table-wrap">
             <table>
-              <thead><tr><th>姓名</th><th>手机号</th><th>所属门店</th><th>角色</th><th>状态</th><th>注册时间</th><th>最近登录</th></tr></thead>
+              <thead><tr><th>姓名</th><th>手机号</th><th>所属门店</th><th>权限</th><th>状态</th><th>注册状态</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr></thead>
               <tbody id="adminUserRows"></tbody>
             </table>
           </div>
@@ -195,12 +206,17 @@
           <div class="panel-head"><div class="panel-title">给客户发券</div></div>
           <div class="panel-body">
             <div class="form-grid">
-              <label>客户手机号<input id="issuePhone" placeholder="输入手机号搜索" /></label>
+              <label>客户查询<input id="issuePhone" placeholder="手机号 / 车架号 / 车牌号 / 姓名 / WID" /></label>
               <label>客户 wid<input id="issueWid" placeholder="自动填充" readonly /></label>
               <label>昵称<input id="issueNickname" placeholder="自动填充" readonly /></label>
               <label>客户归属门店<input id="issueStore" placeholder="自动填充" readonly /></label>
               <label>等级<input id="issueLevel" placeholder="自动填充" readonly /></label>
-              <label>券模板<select id="issueTemplate"></select></label>
+              <label class="wide">券模板
+                <input id="issueTemplateSearch" list="issueTemplateOptions" placeholder="选择或输入关键词搜索券模板" autocomplete="off" />
+                <datalist id="issueTemplateOptions"></datalist>
+                <select id="issueTemplate" class="hidden"></select>
+                <div id="issueTemplateRule" class="template-rule subtle">请选择券模板后查看使用规则</div>
+              </label>
               <label>数量<input id="issueQuantity" type="number" min="1" max="100" value="1" /></label>
               <label>有效期<select id="issueValidityType" onchange="syncIssueValidityType()"><option value="days">按天数</option><option value="unlimited">无限制（2099年1月1日）</option></select></label>
               <label>有效天数<input id="issueDays" type="number" min="1" value="30" /></label>
@@ -269,7 +285,7 @@
         <div class="panel">
           <div class="panel-head"><div class="panel-title">券模板</div></div>
           <div class="panel-body table-wrap">
-            <table><thead><tr><th>模板ID</th><th>名称</th><th>类型</th><th>规则</th></tr></thead><tbody id="templateRows"></tbody></table>
+            <table><thead><tr><th>模板ID</th><th>名称</th><th>类型</th><th>规则</th><th>操作</th></tr></thead><tbody id="templateRows"></tbody></table>
           </div>
         </div>
       </section>
@@ -287,9 +303,9 @@
   </div>
   <div id="couponContextMenu" class="context-menu hidden">
     <button type="button" onclick="confirmContextCouponRedeem()">核销</button>
-    <button type="button" class="danger" onclick="confirmContextCouponVoid()">作废</button>
+    <button type="button" class="danger" data-permission="can_void" onclick="confirmContextCouponVoid()">作废</button>
   </div>
   <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-  <script src="assets/app.js?v=20260527-mobile-admin"></script>
+  <script src="assets/app.js?v=20260528-admin-staff-register"></script>
 </body>
 </html>

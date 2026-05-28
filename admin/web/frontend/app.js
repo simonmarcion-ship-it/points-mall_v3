@@ -8,6 +8,7 @@ let customerTotal = 0;
 let selectedCustomerCoupons = [];
 let customerLookupTimer = null;
 let issueLookupRows = [];
+let issueTemplateRows = [];
 let newCustomerLookupTimer = null;
 let newCustomerCargeerRows = [];
 let contextCouponIndex = null;
@@ -20,6 +21,7 @@ let redeemLookupTimer = null;
 let lastRedeemLookupCode = '';
 let wechatScanConfigured = false;
 let wechatScanConfigPromise = null;
+let registerSmsTimer = null;
 
 function scrollWindowTop() {
   requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
@@ -53,6 +55,35 @@ function showApp(username, profile = {}) {
   updateIssueStoreScopeLabels();
   $('loginView').classList.add('hidden');
   $('appView').classList.remove('hidden');
+  applyPermissions();
+}
+
+function permissions() {
+  return currentAdminProfile.permissions || {};
+}
+
+function can(permission) {
+  return Boolean(permissions()[permission]);
+}
+
+function roleLabel(role) {
+  return {
+    admin: '管理员',
+    issuer: '发券人员',
+    redeemer: '核销人员',
+    staff: '发券人员',
+  }[role] || role || '-';
+}
+
+function applyPermissions() {
+  document.querySelectorAll('[data-permission]').forEach((el) => {
+    el.classList.toggle('hidden', !can(el.dataset.permission));
+  });
+  const active = document.querySelector('.sidebar button.active:not(.hidden)');
+  if (!active) {
+    const first = document.querySelector('.sidebar button:not(.hidden)');
+    if (first) first.click();
+  }
 }
 
 function updateIssueStoreScopeLabels() {
@@ -107,10 +138,6 @@ function showRegisterPanel() {
   document.querySelector('#loginView .login-panel').classList.add('hidden');
   $('registerPanel').classList.remove('hidden');
   $('registerMessage').textContent = '';
-  loadRegisterStores().catch((err) => {
-    $('registerMessage').className = 'message error';
-    $('registerMessage').textContent = err.message;
-  });
 }
 
 function showLoginPanel() {
@@ -122,11 +149,41 @@ function showLoginPanel() {
 window.showRegisterPanel = showRegisterPanel;
 window.showLoginPanel = showLoginPanel;
 
-async function loadRegisterStores() {
-  const data = await api('/api/auth/register-options');
-  $('registerStore').innerHTML = (data.stores || [])
-    .map((row) => `<option value="${html(row.id)}">${html(row.name)}</option>`)
-    .join('');
+function startRegisterSmsCountdown(seconds = 60) {
+  clearInterval(registerSmsTimer);
+  const button = $('registerSmsButton');
+  let remaining = seconds;
+  button.disabled = true;
+  button.textContent = `${remaining}s`;
+  registerSmsTimer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(registerSmsTimer);
+      registerSmsTimer = null;
+      button.disabled = false;
+      button.textContent = '获取验证码';
+      return;
+    }
+    button.textContent = `${remaining}s`;
+  }, 1000);
+}
+
+async function sendRegisterSmsCode() {
+  const msg = $('registerMessage');
+  msg.className = 'message';
+  msg.textContent = '发送验证码中...';
+  try {
+    await api('/api/auth/register-sms/send', {
+      method: 'POST',
+      body: JSON.stringify({ phone: $('registerPhone').value }),
+    });
+    msg.className = 'message ok';
+    msg.textContent = '验证码已发送，请查看短信';
+    startRegisterSmsCountdown();
+  } catch (err) {
+    msg.className = 'message error';
+    msg.textContent = err.message;
+  }
 }
 
 async function registerAdmin(event) {
@@ -139,19 +196,15 @@ async function registerAdmin(event) {
       method: 'POST',
       body: JSON.stringify({
         phone: $('registerPhone').value,
-        name: $('registerName').value,
-        store_id: $('registerStore').value,
-        password: $('registerPassword').value,
-        invite_code: $('registerInviteCode').value,
+        sms_code: $('registerSmsCode').value,
       }),
     });
     msg.className = 'message ok';
-    msg.textContent = '注册成功，请登录';
+    msg.textContent = '注册成功';
     $('loginUsername').value = data.username || $('registerPhone').value;
     $('loginPassword').value = '';
-    showLoginPanel();
-    $('loginMessage').className = 'message ok';
-    $('loginMessage').textContent = '注册成功，请使用手机号和密码登录';
+    showApp(data.username, data.profile || {});
+    await bootstrapApp();
   } catch (err) {
     msg.className = 'message error';
     msg.textContent = err.message;
@@ -159,6 +212,7 @@ async function registerAdmin(event) {
 }
 
 window.registerAdmin = registerAdmin;
+window.sendRegisterSmsCode = sendRegisterSmsCode;
 
 function formatDateTime(value) {
   const text = safe(value);
@@ -304,6 +358,45 @@ async function selectCustomer(wid) {
   const c = data.customer;
   fillIssueCustomer(c);
   selectedCustomerCoupons = data.coupons;
+  renderCustomerDetail(c);
+  $('couponDetail').textContent = '\u9009\u62e9\u4e00\u4e2a\u5238\u67e5\u770b\u8be6\u60c5';
+  renderCustomerCoupons();
+}
+
+function renderCustomerDetail(c) {
+  if (can('can_create_customer')) {
+    const storeOptions = Array.from($('newCustomerStore').options)
+      .filter((option) => option.value)
+      .map((option) => `<option value="${html(option.value)}" ${option.value === c.store_name ? 'selected' : ''}>${html(option.textContent)}</option>`)
+      .join('');
+    $('customerDetail').innerHTML = `
+      <div class="form-grid">
+        <label>客户编号<input id="editCustomerWid" value="${html(c.wid)}" readonly /></label>
+        <label>手机号<input id="editCustomerPhone" value="${html(c.phone)}" inputmode="tel" /></label>
+        <label>昵称<input id="editCustomerNickname" value="${html(c.nickname)}" /></label>
+        <label>客户归属门店<select id="editCustomerStore">${storeOptions}</select></label>
+        <label>等级<input id="editCustomerLevel" value="${html(c.level_name || c.member_card)}" /></label>
+        <label>性别<input id="editCustomerGender" value="${html(c.gender)}" /></label>
+        <label>生日<input id="editCustomerBirthday" type="date" value="${html((c.birthday || '').slice(0, 10))}" /></label>
+        <label>姓名<input id="editCustomerRealName" value="${html(c.real_name)}" /></label>
+        <label>车型车系<input id="editCustomerCarSeries" value="${html(c.car_series)}" /></label>
+        <label>车架号<input id="editCustomerVin" value="${html(c.vin)}" /></label>
+        <label>购买门店<input id="editCustomerPurchaseStore" value="${html(c.purchase_store_name)}" /></label>
+        <label>车牌号<input id="editCustomerPlateNo" value="${html(c.plate_no)}" /></label>
+      </div>
+      <div class="actions"><button type="button" onclick="saveCustomerDetail()">保存客户资料</button></div>
+      <p id="editCustomerMessage" class="message"></p>
+      <div class="kv">
+        <div class="key">车辆信息状态</div><div>${formatBool(c.vehicle_query_success)} ${safe(c.vehicle_errcode) !== '-' ? `(${safe(c.vehicle_errcode)} ${safe(c.vehicle_errmsg)})` : ''}</div>
+        <div class="key">&#25104;&#20026;&#23458;&#25143;&#26102;&#38388;</div><div>${formatDateTime(c.became_customer_at)}</div>
+        <div class="key">&#20837;&#20250;&#26102;&#38388;</div><div>${formatDateTime(c.joined_at)}</div>
+        <div class="key">&#23458;&#25143;&#29366;&#24577;</div><div>${formatCustomerStatus(c.customer_status)}</div>
+        <div class="key">&#40657;&#21517;&#21333;</div><div>${formatBool(c.black_user)}</div>
+      </div>
+    `;
+    return;
+  }
+
   $('customerDetail').innerHTML = `<div class="kv">
     <div class="key">&#23458;&#25143;&#32534;&#21495;</div><div>${safe(c.wid)}</div>
     <div class="key">&#25163;&#26426;&#21495;</div><div>${safe(c.phone)}</div>
@@ -323,8 +416,37 @@ async function selectCustomer(wid) {
     <div class="key">&#23458;&#25143;&#29366;&#24577;</div><div>${formatCustomerStatus(c.customer_status)}</div>
     <div class="key">&#40657;&#21517;&#21333;</div><div>${formatBool(c.black_user)}</div>
   </div>`;
-  $('couponDetail').textContent = '\u9009\u62e9\u4e00\u4e2a\u5238\u67e5\u770b\u8be6\u60c5';
-  renderCustomerCoupons();
+}
+
+async function saveCustomerDetail() {
+  const msg = $('editCustomerMessage');
+  msg.className = 'message';
+  msg.textContent = '保存中...';
+  try {
+    const data = await api('/api/customers/' + encodeURIComponent(selectedWid), {
+      method: 'PATCH',
+      body: JSON.stringify({
+        phone: $('editCustomerPhone').value,
+        nickname: $('editCustomerNickname').value,
+        store_name: $('editCustomerStore').value,
+        level_name: $('editCustomerLevel').value,
+        gender: $('editCustomerGender').value,
+        birthday: $('editCustomerBirthday').value,
+        real_name: $('editCustomerRealName').value,
+        car_series: $('editCustomerCarSeries').value,
+        vin: normalizeVin($('editCustomerVin').value),
+        purchase_store_name: $('editCustomerPurchaseStore').value,
+        plate_no: $('editCustomerPlateNo').value,
+      }),
+    });
+    msg.className = 'message ok';
+    msg.textContent = '客户资料已保存';
+    renderCustomerDetail(data.customer);
+    await searchCustomers(false);
+  } catch (err) {
+    msg.className = 'message error';
+    msg.textContent = err.message;
+  }
 }
 
 function renderCustomerCoupons() {
@@ -402,6 +524,7 @@ function openCouponContextMenu(event, index) {
   event.preventDefault();
   contextCouponIndex = index;
   const menu = $('couponContextMenu');
+  applyPermissions();
   menu.style.left = `${event.clientX}px`;
   menu.style.top = `${event.clientY}px`;
   menu.classList.remove('hidden');
@@ -530,9 +653,11 @@ async function lookupIssueCustomer() {
 
   issueLookupRows = data.items;
   box.innerHTML = data.items.map((row, index) => `
-    <button type="button" class="lookup-item" onclick="selectIssueLookupCustomer(${index})">
+    <button type="button" class="lookup-item lookup-item-vehicle" onclick="selectIssueLookupCustomer(${index})">
       <strong>${safe(row.phone)}</strong>
-      <span>${safe(row.nickname)}</span>
+      <span>${safe(row.real_name || row.nickname)}</span>
+      <span>${safe(row.vin)}</span>
+      <span>${safe(row.plate_no)}</span>
       <span>${safe(row.store_name)}</span>
       <span>${safe(row.level_name || row.member_card)}</span>
     </button>
@@ -686,15 +811,90 @@ function selectNewCustomerCargeerRow(index) {
 
 async function loadTemplates() {
   const data = await api('/api/templates');
+  issueTemplateRows = data.items || [];
   $('issueTemplate').innerHTML = data.items.map((row) => `<option value="${row.id}">${safe(row.name)}</option>`).join('');
+  renderIssueTemplateOptions();
+  syncIssueTemplateDisplay();
   $('templateRows').innerHTML = data.items.map((row) => `
     <tr>
-      <td>${safe(row.id)}</td>
-      <td>${safe(row.name)}</td>
-      <td>${safe(row.coupon_type)}</td>
-      <td>${safe(row.rule_text)}</td>
+      <td data-label="模板ID">${safe(row.id)}</td>
+      <td data-label="名称"><input id="templateName-${safe(row.id)}" value="${html(row.name)}" /></td>
+      <td data-label="类型"><input id="templateType-${safe(row.id)}" value="${html(row.coupon_type)}" /></td>
+      <td data-label="规则"><input id="templateRule-${safe(row.id)}" value="${html(row.rule_text)}" /></td>
+      <td data-label="操作"><button class="secondary" onclick="updateTemplate('${safe(row.id)}')">保存</button></td>
     </tr>
   `).join('');
+}
+
+function issueTemplateOptionText(row) {
+  return [row.name, row.coupon_type, row.id].filter(Boolean).join(' / ');
+}
+
+function renderIssueTemplateOptions(filterText = '') {
+  const list = $('issueTemplateOptions');
+  if (!list) return;
+  const keyword = filterText.trim().toLowerCase();
+  const rows = issueTemplateRows.filter((row) => {
+    if (!keyword) return true;
+    return [row.name, row.coupon_type, row.rule_text, row.id].some((value) => (
+      String(value || '').toLowerCase().includes(keyword)
+    ));
+  });
+  list.innerHTML = rows.map((row) => (
+    `<option value="${html(issueTemplateOptionText(row))}" label="${html(row.rule_text || '')}"></option>`
+  )).join('');
+}
+
+function selectedIssueTemplate() {
+  const selectedId = $('issueTemplate') ? $('issueTemplate').value : '';
+  return issueTemplateRows.find((row) => String(row.id) === String(selectedId)) || null;
+}
+
+function matchIssueTemplateInput(value) {
+  const text = value.trim().toLowerCase();
+  if (!text) return null;
+  return issueTemplateRows.find((row) => (
+    issueTemplateOptionText(row).toLowerCase() === text
+    || String(row.name || '').toLowerCase() === text
+    || String(row.id || '').toLowerCase() === text
+  )) || null;
+}
+
+function syncIssueTemplateFromSearch() {
+  const input = $('issueTemplateSearch');
+  const select = $('issueTemplate');
+  if (!input || !select) return;
+  renderIssueTemplateOptions(input.value);
+  const matched = matchIssueTemplateInput(input.value);
+  select.value = matched ? matched.id : '';
+  syncIssueTemplateDisplay();
+}
+
+function syncIssueTemplateDisplay() {
+  const input = $('issueTemplateSearch');
+  const rule = $('issueTemplateRule');
+  const template = selectedIssueTemplate();
+  if (input && template && input.value !== issueTemplateOptionText(template)) {
+    input.value = issueTemplateOptionText(template);
+  }
+  if (!rule) return;
+  if (template) {
+    rule.textContent = template.rule_text || '该模板暂无使用规则';
+    return;
+  }
+  rule.textContent = '请选择券模板后查看使用规则';
+}
+
+async function updateTemplate(templateId) {
+  await api('/api/templates/' + encodeURIComponent(templateId), {
+    method: 'PATCH',
+    body: JSON.stringify({
+      name: $('templateName-' + templateId).value,
+      coupon_type: $('templateType-' + templateId).value,
+      rule_text: $('templateRule-' + templateId).value,
+    }),
+  });
+  await loadTemplates();
 }
 
 async function loadStores() {
@@ -704,20 +904,21 @@ async function loadStores() {
   )).join('');
   $('storeFilter').innerHTML = `<option value="">????</option>${options}`;
   $('newCustomerStore').innerHTML = `<option value="">?????</option>${options}`;
+  if ($('newAdminStore')) $('newAdminStore').innerHTML = `<option value="">请选择</option>${options}`;
   renderIssueStorePicker(data.items.map((row) => ({
     name: row.name,
     count: row.customer_count,
   })));
-  await loadStoreMaintenance();
+  if (can('can_manage_stores')) await loadStoreMaintenance();
 }
 
 function renderStoreRows(items) {
   $('storeRows').innerHTML = (items || []).map((row) => `
     <tr>
-      <td>${safe(row.name)}</td>
-      <td>${safe(row.customer_count || 0)}</td>
-      <td>${row.enabled ? '<span class="tag unused">启用</span>' : '<span class="tag voided">停用</span>'}</td>
-      <td><button class="secondary" onclick="toggleStore('${safe(row.id)}', ${row.enabled ? 'false' : 'true'})">${row.enabled ? '停用' : '启用'}</button></td>
+      <td data-label="门店">${safe(row.name)}</td>
+      <td data-label="客户数">${safe(row.customer_count || 0)}</td>
+      <td data-label="状态">${row.enabled ? '<span class="tag unused">启用</span>' : '<span class="tag voided">停用</span>'}</td>
+      <td data-label="操作"><button class="secondary" onclick="toggleStore('${safe(row.id)}', ${row.enabled ? 'false' : 'true'})">${row.enabled ? '停用' : '启用'}</button></td>
     </tr>
   `).join('');
 }
@@ -733,15 +934,65 @@ async function loadAdminUsers() {
   const data = await api('/api/admin-users');
   $('adminUserRows').innerHTML = (data.items || []).map((row) => `
     <tr>
-      <td>${html(row.display_name || row.username)}</td>
-      <td>${html(row.phone || row.username)}</td>
-      <td>${html(row.store_name)}</td>
-      <td>${html(row.role || 'staff')}</td>
-      <td>${row.enabled ? '<span class="tag unused">启用</span>' : '<span class="tag voided">停用</span>'}</td>
-      <td>${html(row.created_at)}</td>
-      <td>${html(row.last_login_at)}</td>
+      <td data-label="姓名">${html(row.display_name || row.username)}</td>
+      <td data-label="手机号">${html(row.phone || row.username)}</td>
+      <td data-label="所属门店">${html(row.store_name)}</td>
+      <td data-label="权限">${row.role === 'admin' ? '<span class="tag used">管理员</span>' : `
+        <select onchange="updateAdminUserRole('${safe(row.id)}', this.value)">
+          <option value="issuer" ${row.role === 'issuer' || row.role === 'staff' ? 'selected' : ''}>发券人员</option>
+          <option value="redeemer" ${row.role === 'redeemer' ? 'selected' : ''}>核销人员</option>
+        </select>`}
+      </td>
+      <td data-label="状态">${row.enabled ? '<span class="tag unused">启用</span>' : '<span class="tag voided">停用</span>'}</td>
+      <td data-label="注册状态">${row.registered_at ? '<span class="tag used">已注册</span>' : '<span class="tag expired">待注册</span>'}</td>
+      <td data-label="注册时间">${html(row.created_at)}</td>
+      <td data-label="最近登录">${html(row.last_login_at)}</td>
+      <td data-label="操作"><button class="secondary" onclick="toggleAdminUser('${safe(row.id)}', ${row.enabled ? 'false' : 'true'})">${row.enabled ? '停用' : '启用'}</button></td>
     </tr>
   `).join('');
+}
+
+async function createAdminUser() {
+  const msg = $('newAdminMessage');
+  msg.className = 'message';
+  msg.textContent = '保存中...';
+  try {
+    await api('/api/admin-users', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone: $('newAdminPhone').value,
+        name: $('newAdminName').value,
+        store_id: $('newAdminStore').value,
+        role: $('newAdminRole').value,
+        password: $('newAdminPassword').value,
+      }),
+    });
+    msg.className = 'message ok';
+    msg.textContent = '客服人员已添加，对方可用手机号获取验证码完成注册';
+    $('newAdminPhone').value = '';
+    $('newAdminName').value = '';
+    $('newAdminPassword').value = '';
+    await loadAdminUsers();
+  } catch (err) {
+    msg.className = 'message error';
+    msg.textContent = err.message;
+  }
+}
+
+async function updateAdminUserRole(userId, role) {
+  await api('/api/admin-users/' + encodeURIComponent(userId), {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+  await loadAdminUsers();
+}
+
+async function toggleAdminUser(userId, enabled) {
+  await api('/api/admin-users/' + encodeURIComponent(userId), {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+  await loadAdminUsers();
 }
 
 async function createStore() {
@@ -916,6 +1167,7 @@ async function createTemplate() {
     msg.textContent = `新增成功：${data.template.name}`;
     await loadTemplates();
     $('issueTemplate').value = data.template.id;
+    syncIssueTemplateDisplay();
     $('newTemplateName').value = '';
     $('newTemplateType').value = '';
     $('newTemplateRule').value = '';
@@ -934,6 +1186,10 @@ async function issueCoupon() {
     if (!$('issueWid').value) {
       throw new Error('请先输入手机号并选择客户');
     }
+    const template = selectedIssueTemplate();
+    if (!template) {
+      throw new Error('请先从下拉列表选择券模板');
+    }
     if ($('issueUsableStoreScope').value === 'selected' && selectedIssueUsableStoreNames().length === 0) {
       throw new Error('选择指定门店时，请至少选择一个可用门店');
     }
@@ -946,7 +1202,7 @@ async function issueCoupon() {
       method: 'POST',
       body: JSON.stringify({
         wid: $('issueWid').value,
-        template_id: $('issueTemplate').value,
+        template_id: template.id,
         quantity: Number($('issueQuantity').value),
         validity_type: $('issueValidityType').value,
         valid_days: Number($('issueDays').value),
@@ -967,7 +1223,9 @@ async function issueCoupon() {
 }
 
 function confirmIssueCouponDetail() {
-  const template = $('issueTemplate').selectedOptions[0]?.textContent || $('issueTemplate').value || '-';
+  const template = selectedIssueTemplate();
+  const templateText = template ? issueTemplateOptionText(template) : '-';
+  const templateRule = template ? (template.rule_text || '该模板暂无使用规则') : '-';
   const quantity = Number($('issueQuantity').value || 0);
   const validity = $('issueValidityType').value === 'unlimited'
     ? '永久有效（2099年1月1日）'
@@ -985,7 +1243,8 @@ function confirmIssueCouponDetail() {
     '',
     `客户：${customer}`,
     `客户归属门店：${$('issueStore').value || '-'}`,
-    `券模板：${template}`,
+    `券模板：${templateText}`,
+    `使用规则：${templateRule}`,
     `数量：${quantity}`,
     `有效期：${validity}`,
     `使用门店范围：${scopeText}`,
@@ -1269,6 +1528,7 @@ async function loadLogs() {
 }
 
 document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListener('click', () => {
+  if (btn.classList.contains('hidden')) return;
   document.querySelectorAll('.sidebar button').forEach((item) => item.classList.remove('active'));
   btn.classList.add('active');
   document.querySelectorAll('.view').forEach((item) => item.classList.add('hidden'));
@@ -1283,6 +1543,7 @@ document.addEventListener('click', (event) => {
 });
 
 async function bootstrapApp() {
+  applyPermissions();
   await loadSummary();
   await loadStores();
   await loadTemplates();
@@ -1303,6 +1564,11 @@ async function init() {
       lookupIssueCustomer();
     }
   });
+  $('issueTemplateSearch').addEventListener('focus', () => {
+    renderIssueTemplateOptions($('issueTemplateSearch').value);
+  });
+  $('issueTemplateSearch').addEventListener('input', syncIssueTemplateFromSearch);
+  $('issueTemplateSearch').addEventListener('change', syncIssueTemplateFromSearch);
   $('newCustomerPhone').addEventListener('input', scheduleNewCustomerCargeerLookup);
   $('newCustomerPhone').addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
