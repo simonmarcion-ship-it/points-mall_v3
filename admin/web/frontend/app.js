@@ -888,9 +888,9 @@ function syncIssueTemplateFromSearch() {
   const select = $('issueTemplate');
   if (!input || !select) return;
   renderIssueTemplateOptions(input.value);
-  const matched = matchIssueTemplateInput(input.value);
-  select.value = matched ? matched.id : '';
-  syncIssueTemplateDisplay();
+  select.value = '';
+  const rule = $('issueTemplateRule');
+  if (rule) rule.textContent = '请从下拉列表选择券模板后查看使用规则';
 }
 
 function syncIssueTemplateDisplay() {
@@ -925,9 +925,12 @@ async function loadStores() {
   const options = data.items.map((row) => (
     `<option value="${safe(row.name)}">${safe(row.name)}</option>`
   )).join('');
+  const storeIdOptions = data.items.map((row) => (
+    `<option value="${html(row.id)}">${html(row.name)}</option>`
+  )).join('');
   $('storeFilter').innerHTML = `<option value="">????</option>${options}`;
   $('newCustomerStore').innerHTML = `<option value="">?????</option>${options}`;
-  if ($('newAdminStore')) $('newAdminStore').innerHTML = `<option value="">请选择</option>${options}`;
+  if ($('newAdminStore')) $('newAdminStore').innerHTML = `<option value="">请选择</option>${storeIdOptions}`;
   renderIssueStorePicker(data.items.map((row) => ({
     name: row.name,
     count: row.customer_count,
