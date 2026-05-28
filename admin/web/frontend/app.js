@@ -1010,9 +1010,11 @@ async function loadAdminUsers() {
           <option value="issuer" ${row.role === 'issuer' || row.role === 'staff' ? 'selected' : ''}>发券人员</option>
           <option value="redeemer" ${row.role === 'redeemer' ? 'selected' : ''}>核销人员</option>
         </select>`);
-    const actionHtml = deleted
+    const actionHtml = row.role === 'admin'
+      ? '<span class="subtle">数据库维护</span>'
+      : deleted
       ? '<span class="subtle">可用同手机号重新新增</span>'
-      : `<button class="secondary" onclick="toggleAdminUser('${safe(row.id)}', ${row.enabled ? 'false' : 'true'})">${row.enabled ? '停用' : '启用'}</button>
+      : `<button class="secondary" onclick="toggleAdminUser('${safe(row.id)}', ${row.enabled ? 'false' : 'true'}, '${html(row.display_name || row.phone || row.username)}')">${row.enabled ? '停用' : '启用'}</button>
          <button class="danger" onclick="deleteAdminUser('${safe(row.id)}', '${html(row.display_name || row.phone || row.username)}')">删除</button>`;
     return `
     <tr class="${deleted ? 'muted-row' : ''}">
@@ -1065,7 +1067,11 @@ async function updateAdminUserRole(userId, role) {
   await loadAdminUsers();
 }
 
-async function toggleAdminUser(userId, enabled) {
+async function toggleAdminUser(userId, enabled, name = '') {
+  const action = enabled ? '启用' : '停用';
+  if (!window.confirm(`确定${action}客服人员「${name || userId}」吗？`)) {
+    return;
+  }
   await api('/api/admin-users/' + encodeURIComponent(userId), {
     method: 'PATCH',
     body: JSON.stringify({ enabled }),
