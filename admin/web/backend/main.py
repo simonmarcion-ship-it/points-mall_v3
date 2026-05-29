@@ -1755,13 +1755,41 @@ def void_coupon(req: VoidCouponRequest, request: Request) -> dict:
 
 @app.get("/api/logs")
 def logs(request: Request, limit: int = 100) -> dict:
-    require_login(request)
+    username = require_login(request)
     limit = max(1, min(limit, 500))
     with db_session() as conn:
-        rows = conn.execute(
-            "SELECT * FROM operation_logs ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        role = admin_role(conn, username)
+        if role in {"admin", "super_admin"}:
+            rows = conn.execute(
+                "SELECT * FROM operation_logs ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            user = row_to_dict(
+                conn.execute(
+                    "SELECT username, display_name, phone FROM admin_users WHERE username = ?",
+                    (username,),
+                ).fetchone()
+            )
+            operator_names = {
+                username,
+                user.get("username") or "",
+                user.get("display_name") or "",
+                user.get("phone") or "",
+            }
+            operator_names = {name for name in operator_names if name}
+            if not operator_names:
+                return {"items": []}
+            placeholders = ",".join("?" for _ in operator_names)
+            rows = conn.execute(
+                f"""
+                SELECT * FROM operation_logs
+                WHERE operator IN ({placeholders})
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (*operator_names, limit),
+            ).fetchall()
         return {"items": rows_to_dicts(rows)}
 
 
