@@ -549,17 +549,17 @@ def redeem_store_options(coupon: dict, admin_profile: dict) -> list[dict]:
 def select_redeem_store(coupon: dict, admin_profile: dict, store_id: str = "", store_name: str = "") -> dict:
     options = redeem_store_options(coupon, admin_profile)
     if not options:
-        raise HTTPException(status_code=403, detail="current account stores cannot redeem this coupon")
+        raise HTTPException(status_code=403, detail="当前账户所属门店不能核销该券")
     cleaned_id = (store_id or "").strip()
     cleaned_name = (store_name or "").strip()
     if cleaned_id or cleaned_name:
         for store in options:
             if (cleaned_id and str(store.get("id") or "") == cleaned_id) or (cleaned_name and str(store.get("name") or "") == cleaned_name):
                 return store
-        raise HTTPException(status_code=403, detail="selected store cannot redeem this coupon")
+        raise HTTPException(status_code=403, detail="所选门店不能核销该券")
     if len(options) == 1:
         return options[0]
-    raise HTTPException(status_code=400, detail="please choose redeem store")
+    raise HTTPException(status_code=400, detail="请选择本次核销门店")
 
 
 def store_id_for(name: str) -> str:
@@ -1938,7 +1938,7 @@ def coupon_preview(code: str, request: Request) -> dict:
         admin_profile = current_admin_profile(conn, username)
         options = redeem_store_options(coupon, admin_profile)
         redeemable = coupon.get("status") == "unused" and bool(options)
-        message = "" if redeemable else "current account stores cannot redeem this coupon"
+        message = "" if redeemable else "当前账户所属门店不能核销该券"
         return {
             "coupon": coupon,
             "redeemable": redeemable,

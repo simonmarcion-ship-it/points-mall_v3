@@ -160,6 +160,7 @@ async function login(event) {
   } catch (err) {
     msg.className = 'message error';
     msg.textContent = err.message;
+    alert(err.message);
   }
 }
 
