@@ -199,6 +199,8 @@ async function registerAdmin(event) {
       body: JSON.stringify({
         phone: $('registerPhone').value,
         sms_code: $('registerSmsCode').value,
+        password: $('registerPassword').value,
+        password_confirm: $('registerPasswordConfirm').value,
       }),
     });
     msg.className = 'message ok';
@@ -876,6 +878,7 @@ function selectNewCustomerCargeerRow(index) {
 }
 
 async function loadTemplates() {
+  const canManageTemplates = can('can_manage_templates');
   const data = await api(can('can_manage_templates') ? '/api/templates?include_disabled=true' : '/api/templates');
   const allRows = data.items || [];
   issueTemplateRows = allRows.filter((row) => Number(row.enabled) === 1);
@@ -887,10 +890,10 @@ async function loadTemplates() {
     <tr class="${Number(row.enabled) === 1 ? '' : 'muted-row'}">
       <td data-label="模板ID">${safe(row.id)}</td>
       <td data-label="状态">${Number(row.enabled) === 1 ? statusTag('unused', '启用') : statusTag('voided', '停用')}</td>
-      <td data-label="名称"><input id="templateName-${safe(row.id)}" value="${html(row.name)}" /></td>
-      <td data-label="类型"><input id="templateType-${safe(row.id)}" value="${html(row.coupon_type)}" /></td>
-      <td data-label="使用规则"><textarea id="templateRule-${safe(row.id)}" rows="4">${html(row.rule_text)}</textarea></td>
-      <td data-label="操作"><div class="row-actions"><button class="secondary" onclick="updateTemplate('${safe(row.id)}')">保存</button><button class="${Number(row.enabled) === 1 ? 'danger' : 'secondary'}" onclick="toggleTemplate('${safe(row.id)}', ${Number(row.enabled) === 1 ? 'false' : 'true'})">${Number(row.enabled) === 1 ? '停用' : '启用'}</button></div></td>
+      <td data-label="名称">${canManageTemplates ? `<input id="templateName-${safe(row.id)}" value="${html(row.name)}" />` : html(row.name)}</td>
+      <td data-label="类型">${canManageTemplates ? `<input id="templateType-${safe(row.id)}" value="${html(row.coupon_type)}" />` : html(row.coupon_type)}</td>
+      <td data-label="使用规则">${canManageTemplates ? `<textarea id="templateRule-${safe(row.id)}" rows="4">${html(row.rule_text)}</textarea>` : `<div class="preline">${html(row.rule_text || '暂无使用规则')}</div>`}</td>
+      <td data-label="操作">${canManageTemplates ? `<div class="row-actions"><button class="secondary" onclick="updateTemplate('${safe(row.id)}')">保存</button><button class="${Number(row.enabled) === 1 ? 'danger' : 'secondary'}" onclick="toggleTemplate('${safe(row.id)}', ${Number(row.enabled) === 1 ? 'false' : 'true'})">${Number(row.enabled) === 1 ? '停用' : '启用'}</button></div>` : '<span class="subtle">只读</span>'}</td>
     </tr>
   `).join('');
 }
@@ -1088,14 +1091,12 @@ async function createAdminUser() {
         name: $('newAdminName').value,
         store_id: $('newAdminStore').value,
         role: $('newAdminRole').value,
-        password: $('newAdminPassword').value,
       }),
     });
     msg.className = 'message ok';
     msg.textContent = '客服人员已添加，对方可用手机号获取验证码完成注册';
     $('newAdminPhone').value = '';
     $('newAdminName').value = '';
-    $('newAdminPassword').value = '';
     await loadAdminUsers();
   } catch (err) {
     msg.className = 'message error';

@@ -77,6 +77,8 @@ class LoginRequest(BaseModel):
 class RegisterAdminRequest(BaseModel):
     phone: str
     sms_code: str
+    password: str
+    password_confirm: str = ""
 
 
 class SendAdminRegisterSmsRequest(BaseModel):
@@ -144,7 +146,6 @@ class CreateAdminUserRequest(BaseModel):
     name: str
     store_id: str
     role: str
-    password: str
 
 
 class ClientLookupRequest(BaseModel):
@@ -777,6 +778,12 @@ def register_admin(req: RegisterAdminRequest, response: Response) -> dict:
         phone = normalize_phone(req.phone)
     except SmsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    password = req.password.strip()
+    password_confirm = req.password_confirm.strip()
+    if len(password) < 5:
+        raise HTTPException(status_code=400, detail="密码至少 5 位")
+    if password_confirm and password != password_confirm:
+        raise HTTPException(status_code=400, detail="两次输入的密码不一致")
 
     try:
         if not verify_sms_code(phone, req.sms_code):
@@ -803,13 +810,11 @@ def register_admin(req: RegisterAdminRequest, response: Response) -> dict:
             raise HTTPException(status_code=400, detail="该账号已停用，不能注册")
         if user.get("registered_at"):
             raise HTTPException(status_code=400, detail="该手机号已注册，请直接登录")
-        if not user.get("password_hash"):
-            raise HTTPException(status_code=400, detail="管理员尚未设置登录密码")
 
         now = now_text()
         conn.execute(
-            "UPDATE admin_users SET registered_at = ?, last_login_at = ? WHERE id = ?",
-            (now, now, user["id"]),
+            "UPDATE admin_users SET password_hash = ?, registered_at = ?, last_login_at = ? WHERE id = ?",
+            (hash_password(password), now, now, user["id"]),
         )
         set_session_cookie(response, user["username"])
         profile = current_admin_profile(conn, user["username"])
@@ -1235,14 +1240,11 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
     except SmsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     name = req.name.strip()
-    password = req.password.strip()
     role = req.role.strip()
     if not name:
         raise HTTPException(status_code=400, detail="请输入姓名")
     if role not in allowed_roles:
         raise HTTPException(status_code=400, detail="只能新增发券人员或核销人员")
-    if len(password) < 5:
-        raise HTTPException(status_code=400, detail="密码至少 5 位")
 
     with db_session() as conn:
         store = row_to_dict(
@@ -1264,14 +1266,13 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                 conn.execute(
                     """
                     UPDATE admin_users
-                    SET username = ?, password_hash = ?, display_name = ?, phone = ?,
+                    SET username = ?, password_hash = NULL, display_name = ?, phone = ?,
                         store_id = ?, store_name = ?, role = ?, enabled = 1,
                         registered_at = NULL, last_login_at = NULL, deleted_at = NULL
                     WHERE id = ?
                     """,
                     (
                         phone,
-                        hash_password(password),
                         name,
                         phone,
                         store["id"],
@@ -1300,7 +1301,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
             (
                 user_id,
                 phone,
-                hash_password(password),
+                None,
                 name,
                 phone,
                 store["id"],

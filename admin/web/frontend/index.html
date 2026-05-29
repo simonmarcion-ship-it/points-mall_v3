@@ -23,6 +23,8 @@
         <label>验证码<input id="registerSmsCode" inputmode="numeric" autocomplete="one-time-code" /></label>
         <button id="registerSmsButton" type="button" class="secondary" onclick="sendRegisterSmsCode()">获取验证码</button>
       </div>
+      <label>设置密码<input id="registerPassword" type="password" autocomplete="new-password" placeholder="至少 5 位" /></label>
+      <label>确认密码<input id="registerPasswordConfirm" type="password" autocomplete="new-password" placeholder="再次输入密码" /></label>
       <button type="submit">提交注册</button>
       <button type="button" class="secondary" onclick="showLoginPanel()">返回登录</button>
       <p id="registerMessage" class="message"></p>
@@ -50,7 +52,7 @@
       <button data-view="admin-users" data-permission="can_admin_users">客服人员维护</button>
       <button data-view="issue" data-permission="can_issue">发券</button>
       <button data-view="redeem" data-permission="can_redeem">核销</button>
-      <button data-view="templates" data-permission="can_manage_templates">券模板</button>
+      <button data-view="templates">券模板</button>
       <button data-view="logs">操作记录</button>
     </nav>
     <section class="content">
@@ -130,7 +132,7 @@
       </section>
 
       <section id="view-stores" class="view hidden">
-        <div class="panel">
+        <div class="panel" data-permission="can_manage_templates">
           <div class="panel-head">
             <div class="panel-title">门店总表维护</div>
             <button class="secondary" onclick="loadStores()">刷新</button>
@@ -163,7 +165,6 @@
               <label>姓名<input id="newAdminName" placeholder="客服姓名" /></label>
               <label>所属门店<select id="newAdminStore"></select></label>
               <label>权限<select id="newAdminRole"><option value="issuer">发券人员</option><option value="redeemer">核销人员</option></select></label>
-              <label>初始密码<input id="newAdminPassword" type="password" autocomplete="new-password" placeholder="至少 5 位" /></label>
             </div>
             <div class="actions"><button type="button" onclick="createAdminUser()">新增客服人员</button></div>
             <p id="newAdminMessage" class="message"></p>
