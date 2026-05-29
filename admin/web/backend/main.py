@@ -78,6 +78,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SwitchIdentityRequest(BaseModel):
+    user_id: str
+
+
 class RegisterAdminRequest(BaseModel):
     phone: str
     sms_code: str
@@ -143,14 +147,12 @@ class UpdateStoreRequest(BaseModel):
 class UpdateAdminUserRequest(BaseModel):
     role: str | None = None
     enabled: bool | None = None
-    store_ids: list[str] | None = None
 
 
 class CreateAdminUserRequest(BaseModel):
     phone: str
     name: str
     store_id: str = ""
-    store_ids: list[str] = []
     role: str
 
 
@@ -336,7 +338,7 @@ def current_admin_profile(conn, username: str) -> dict:
     user = row_to_dict(
         conn.execute(
             """
-            SELECT u.id, u.username, u.display_name, u.store_id, u.store_name, u.role,
+            SELECT u.id, u.username, u.display_name, u.phone, u.store_id, u.store_name, u.role,
                    s.name AS linked_store_name
             FROM admin_users u
             LEFT JOIN stores s ON s.id = u.store_id
@@ -351,6 +353,8 @@ def current_admin_profile(conn, username: str) -> dict:
         primary_store = stores[0] if stores else {"id": user.get("store_id"), "name": user.get("store_name") or user.get("linked_store_name")}
         return {
             "user_id": user.get("id") or user.get("username"),
+            "username": user.get("username"),
+            "phone": user.get("phone") or user.get("username"),
             "name": user.get("display_name") or user.get("username"),
             "store_id": primary_store.get("id"),
             "store_name": join_text(store_names) or primary_store.get("name"),
@@ -363,6 +367,8 @@ def current_admin_profile(conn, username: str) -> dict:
         raise HTTPException(status_code=401, detail="login expired")
     return {
         "user_id": username,
+        "username": username,
+        "phone": "",
         "name": username,
         "store_id": None,
         "store_name": "",
@@ -371,6 +377,42 @@ def current_admin_profile(conn, username: str) -> dict:
         "store_names": [],
         "role": "super_admin",
     }
+
+
+def admin_identity_options(conn, profile: dict) -> list[dict]:
+    phone = (profile.get("phone") or "").strip()
+    if not phone or profile.get("role") == "super_admin":
+        return []
+    rows = rows_to_dicts(
+        conn.execute(
+            """
+            SELECT id, username, display_name, phone, store_id, store_name, role
+            FROM admin_users
+            WHERE phone = ? AND enabled = 1 AND deleted_at IS NULL AND registered_at IS NOT NULL
+            ORDER BY store_name, role, display_name, username
+            """,
+            (phone,),
+        ).fetchall()
+    )
+    return [
+        {
+            "user_id": row.get("id"),
+            "username": row.get("username"),
+            "name": row.get("display_name") or row.get("username"),
+            "phone": row.get("phone"),
+            "store_id": row.get("store_id"),
+            "store_name": row.get("store_name"),
+            "role": row.get("role") or "issuer",
+            "current": row.get("id") == profile.get("user_id"),
+        }
+        for row in rows
+    ]
+
+
+def attach_profile_extras(conn, profile: dict) -> dict:
+    profile["permissions"] = role_permissions(profile.get("role") or "issuer")
+    profile["identities"] = admin_identity_options(conn, profile)
+    return profile
 
 
 def admin_role(conn, username: str) -> str:
@@ -446,6 +488,20 @@ def store_options_by_ids(conn, store_ids: list[str]) -> list[dict]:
     )
     by_id = {row["id"]: row for row in rows}
     return [by_id[store_id] for store_id in cleaned if store_id in by_id]
+
+
+def unique_admin_username(conn, phone: str, current_user_id: str = "") -> str:
+    username = phone
+    row = conn.execute(
+        "SELECT id FROM admin_users WHERE username = ? AND id != ?",
+        (username, current_user_id),
+    ).fetchone()
+    if not row:
+        return username
+    username = f"{phone}_{secrets.token_hex(3)}"
+    while conn.execute("SELECT 1 FROM admin_users WHERE username = ?", (username,)).fetchone():
+        username = f"{phone}_{secrets.token_hex(3)}"
+    return username
 
 
 def replace_admin_user_stores(conn, user_id: str, stores: list[dict]) -> None:
@@ -815,32 +871,37 @@ def client_coupon_detail(code: str, phone: str) -> dict:
 def login(req: LoginRequest, response: Response) -> dict:
     username = req.username.strip()
     with db_session() as conn:
-        user = row_to_dict(
+        users = rows_to_dicts(
             conn.execute(
                 """
                 SELECT *
                 FROM admin_users
-                WHERE username = ? AND enabled = 1 AND deleted_at IS NULL
+                WHERE (username = ? OR phone = ?) AND enabled = 1 AND deleted_at IS NULL
+                ORDER BY username = ? DESC, store_name, role, display_name
                 """,
-                (username,),
-            ).fetchone()
+                (username, username, username),
+            ).fetchall()
         )
-        if user and verify_password(req.password, user.get("password_hash")):
+        user = next((row for row in users if verify_password(req.password, row.get("password_hash"))), None)
+        if user:
             if user.get("role") not in {"admin", "super_admin"} and not user.get("registered_at"):
                 raise HTTPException(status_code=403, detail="请先用手机号验证码完成注册")
-            conn.execute("UPDATE admin_users SET last_login_at = ? WHERE username = ?", (now_text(), username))
-            set_session_cookie(response, username)
-            profile = current_admin_profile(conn, username)
-            profile["permissions"] = role_permissions(profile.get("role") or "issuer")
-            return {"username": username, "profile": profile}
+            conn.execute("UPDATE admin_users SET last_login_at = ? WHERE id = ?", (now_text(), user["id"]))
+            set_session_cookie(response, user["username"])
+            profile = attach_profile_extras(conn, current_admin_profile(conn, user["username"]))
+            return {"username": user["username"], "profile": profile}
 
     if authenticate(username, req.password):
         set_session_cookie(response, username)
         profile = {
             "user_id": username,
+            "username": username,
+            "phone": "",
             "name": username,
             "store_id": None,
             "store_name": "",
+            "stores": [],
+            "identities": [],
             "role": "super_admin",
         }
         profile["permissions"] = role_permissions("super_admin")
@@ -868,19 +929,14 @@ def send_admin_register_sms(req: SendAdminRegisterSmsRequest) -> dict:
                 """
                 SELECT id, registered_at, enabled, deleted_at
                 FROM admin_users
-                WHERE username = ? OR phone = ?
+                WHERE (username = ? OR phone = ?) AND enabled = 1 AND deleted_at IS NULL
+                ORDER BY registered_at IS NULL DESC
                 """,
                 (phone, phone),
             ).fetchone()
         )
         if not user:
             raise HTTPException(status_code=400, detail="该手机号尚未由管理员添加，不能注册")
-        if user.get("deleted_at"):
-            raise HTTPException(status_code=400, detail="该账号已被删除，不能注册")
-        if not user.get("enabled"):
-            raise HTTPException(status_code=400, detail="该账号已停用，不能注册")
-        if user.get("registered_at"):
-            raise HTTPException(status_code=400, detail="该手机号已注册，请直接登录")
 
     try:
         send_sms_code(phone)
@@ -909,33 +965,46 @@ def register_admin(req: RegisterAdminRequest, response: Response) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     with db_session() as conn:
-        user = row_to_dict(
+        users = rows_to_dicts(
             conn.execute(
                 """
                 SELECT *
                 FROM admin_users
-                WHERE username = ? OR phone = ?
+                WHERE (username = ? OR phone = ?) AND deleted_at IS NULL
+                ORDER BY registered_at IS NULL DESC, store_name, role, display_name
                 """,
                 (phone, phone),
-            ).fetchone()
+            ).fetchall()
         )
-        if not user:
+        if not users:
             raise HTTPException(status_code=400, detail="该手机号尚未由管理员添加，不能注册")
-        if user.get("deleted_at"):
-            raise HTTPException(status_code=400, detail="该账号已被删除，不能注册")
-        if not user.get("enabled"):
+        if not any(row.get("enabled") for row in users):
             raise HTTPException(status_code=400, detail="该账号已停用，不能注册")
-        if user.get("registered_at"):
-            raise HTTPException(status_code=400, detail="该手机号已注册，请直接登录")
 
         now = now_text()
+        password_hash = hash_password(password)
         conn.execute(
-            "UPDATE admin_users SET password_hash = ?, registered_at = ?, last_login_at = ? WHERE id = ?",
-            (hash_password(password), now, now, user["id"]),
+            """
+            UPDATE admin_users
+            SET password_hash = ?, registered_at = COALESCE(registered_at, ?)
+            WHERE phone = ? AND enabled = 1 AND deleted_at IS NULL
+            """,
+            (password_hash, now, phone),
         )
+        user = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT *
+                FROM admin_users
+                WHERE phone = ? AND enabled = 1 AND deleted_at IS NULL
+                ORDER BY store_name, role, display_name
+                """,
+                (phone,),
+            ).fetchall()
+        )[0]
+        conn.execute("UPDATE admin_users SET last_login_at = ? WHERE id = ?", (now, user["id"]))
         set_session_cookie(response, user["username"])
-        profile = current_admin_profile(conn, user["username"])
-        profile["permissions"] = role_permissions(profile.get("role") or "issuer")
+        profile = attach_profile_extras(conn, current_admin_profile(conn, user["username"]))
         return {"ok": True, "username": user["username"], "profile": profile}
 
 
@@ -951,9 +1020,33 @@ def me(request: Request) -> dict:
     if not username:
         raise HTTPException(status_code=401, detail="请先登录")
     with db_session() as conn:
-        profile = current_admin_profile(conn, username)
-        profile["permissions"] = role_permissions(profile.get("role") or "issuer")
+        profile = attach_profile_extras(conn, current_admin_profile(conn, username))
         return {"username": username, "profile": profile}
+
+
+@app.post("/api/auth/switch-identity")
+def switch_identity(req: SwitchIdentityRequest, request: Request, response: Response) -> dict:
+    username = require_login(request)
+    with db_session() as conn:
+        current = current_admin_profile(conn, username)
+        target = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM admin_users
+                WHERE id = ? AND enabled = 1 AND deleted_at IS NULL AND registered_at IS NOT NULL
+                """,
+                (req.user_id.strip(),),
+            ).fetchone()
+        )
+        if not target:
+            raise HTTPException(status_code=404, detail="identity not found")
+        if current.get("role") != "super_admin" and (target.get("phone") or "") != (current.get("phone") or ""):
+            raise HTTPException(status_code=403, detail="cannot switch to this identity")
+        conn.execute("UPDATE admin_users SET last_login_at = ? WHERE id = ?", (now_text(), target["id"]))
+        set_session_cookie(response, target["username"])
+        profile = attach_profile_extras(conn, current_admin_profile(conn, target["username"]))
+        return {"username": target["username"], "profile": profile}
 
 
 @app.get("/api/summary")
@@ -1342,6 +1435,7 @@ def admin_users(request: Request) -> dict:
             SELECT id, username, display_name, phone, store_id, store_name, role, enabled,
                    created_at, registered_at, last_login_at, deleted_at
             FROM admin_users
+            WHERE deleted_at IS NULL
             ORDER BY deleted_at IS NOT NULL, enabled DESC, store_name, display_name, phone
             """
         ).fetchall()
@@ -1371,8 +1465,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="只能新增发券人员或核销人员")
 
     with db_session() as conn:
-        stores = store_options_by_ids(conn, req.store_ids or ([req.store_id] if req.store_id else []))
-        store = stores[0] if stores else row_to_dict(
+        store = row_to_dict(
             conn.execute(
                 "SELECT id, name FROM stores WHERE id = ? AND enabled = 1",
                 (req.store_id.strip(),),
@@ -1380,10 +1473,28 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
         )
         if not store:
             raise HTTPException(status_code=400, detail="请选择有效门店")
+        phone_auth = row_to_dict(
+            conn.execute(
+                """
+                SELECT password_hash, registered_at
+                FROM admin_users
+                WHERE phone = ? AND enabled = 1 AND deleted_at IS NULL AND registered_at IS NOT NULL
+                ORDER BY last_login_at DESC
+                LIMIT 1
+                """,
+                (phone,),
+            ).fetchone()
+        )
         existing = row_to_dict(
             conn.execute(
-                "SELECT * FROM admin_users WHERE username = ? OR phone = ?",
-                (phone, phone),
+                """
+                SELECT *
+                FROM admin_users
+                WHERE phone = ? AND store_id = ? AND role = ?
+                ORDER BY deleted_at IS NULL DESC
+                LIMIT 1
+                """,
+                (phone, store["id"], role),
             ).fetchone()
         )
         if existing:
@@ -1391,22 +1502,26 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                 conn.execute(
                     """
                     UPDATE admin_users
-                    SET username = ?, password_hash = NULL, display_name = ?, phone = ?,
+                    SET username = ?, display_name = ?, phone = ?,
                         store_id = ?, store_name = ?, role = ?, enabled = 1,
-                        registered_at = NULL, last_login_at = NULL, deleted_at = NULL
+                        password_hash = COALESCE(?, password_hash),
+                        registered_at = COALESCE(?, registered_at),
+                        deleted_at = NULL
                     WHERE id = ?
                     """,
                     (
-                        phone,
+                        unique_admin_username(conn, phone, existing["id"]),
                         name,
                         phone,
                         store["id"],
                         store["name"],
                         role,
+                        phone_auth.get("password_hash"),
+                        phone_auth.get("registered_at"),
                         existing["id"],
                     ),
                 )
-                replace_admin_user_stores(conn, existing["id"], stores or [store])
+                replace_admin_user_stores(conn, existing["id"], [store])
                 return {
                     "user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (existing["id"],)).fetchone()),
                     "created": False,
@@ -1417,26 +1532,28 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
         user_id = local_id("ADMIN_USER")
         while conn.execute("SELECT 1 FROM admin_users WHERE id = ?", (user_id,)).fetchone():
             user_id = local_id("ADMIN_USER")
+        username_value = unique_admin_username(conn, phone)
         conn.execute(
             """
             INSERT INTO admin_users (
                 id, username, password_hash, display_name, phone, store_id, store_name,
                 role, enabled, created_at, registered_at, last_login_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)
             """,
             (
                 user_id,
-                phone,
-                None,
+                username_value,
+                phone_auth.get("password_hash"),
                 name,
                 phone,
                 store["id"],
                 store["name"],
                 role,
                 now_text(),
+                phone_auth.get("registered_at"),
             ),
         )
-        replace_admin_user_stores(conn, user_id, stores or [store])
+        replace_admin_user_stores(conn, user_id, [store])
         return {
             "user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone()),
             "created": True,
@@ -1467,11 +1584,6 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
             if user.get("username") == username and not req.enabled:
                 raise HTTPException(status_code=400, detail="不能停用当前登录账号")
             conn.execute("UPDATE admin_users SET enabled = ? WHERE id = ?", (1 if req.enabled else 0, user_id))
-        if req.store_ids is not None:
-            stores = store_options_by_ids(conn, req.store_ids)
-            if not stores:
-                raise HTTPException(status_code=400, detail="璇烽€夋嫨鏈夋晥闂ㄥ簵")
-            replace_admin_user_stores(conn, user_id, stores)
         return {"user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())}
 
 

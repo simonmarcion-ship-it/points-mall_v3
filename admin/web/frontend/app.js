@@ -54,11 +54,38 @@ function showApp(username, profile = {}) {
   $('currentRole').textContent = roleLabel(profile.role);
   $('currentStore').textContent = safe(profile.store_name);
   $('operator').value = displayName || username;
+  renderIdentitySwitcher(profile.identities || []);
   updateIssueStoreScopeLabels();
   renderOperationStoreOptions();
   $('loginView').classList.add('hidden');
   $('appView').classList.remove('hidden');
   applyPermissions();
+}
+
+function renderIdentitySwitcher(identities) {
+  const wrap = $('identitySwitcherWrap');
+  const select = $('identitySwitcher');
+  if (!wrap || !select) return;
+  if (!identities || identities.length <= 1) {
+    wrap.classList.add('hidden');
+    select.innerHTML = '';
+    return;
+  }
+  select.innerHTML = identities.map((identity) => {
+    const label = `${identity.store_name || '-'} / ${roleLabel(identity.role)}`;
+    return `<option value="${html(identity.user_id)}" ${identity.current ? 'selected' : ''}>${html(label)}</option>`;
+  }).join('');
+  wrap.classList.remove('hidden');
+}
+
+async function switchIdentity(userId) {
+  if (!userId || userId === currentAdminProfile.user_id) return;
+  const data = await api('/api/auth/switch-identity', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+  showApp(data.username, data.profile || {});
+  await bootstrapApp();
 }
 
 function permissions() {
@@ -1070,12 +1097,8 @@ async function loadAdminUsers() {
       : (row.registered_at ? '<span class="tag used">已注册</span>' : '<span class="tag expired">待注册</span>');
     const canPromoteAdmin = can('can_promote_admin');
     const protectedRole = row.role === 'super_admin' || (!canPromoteAdmin && row.role === 'admin');
-    const storeNames = row.store_names?.length ? row.store_names.join('、') : row.store_name;
-    const storeEditHtml = protectedRole || deleted
-      ? html(storeNames)
-      : `<select multiple size="3" onchange="updateAdminUserStores('${safe(row.id)}', this)">
-          ${Array.from($('newAdminStore')?.options || []).map((option) => `<option value="${html(option.value)}" ${(row.store_ids || []).includes(option.value) ? 'selected' : ''}>${html(option.textContent)}</option>`).join('')}
-        </select>`;
+    const storeNames = row.store_name || (row.store_names?.length ? row.store_names.join('、') : '');
+    const storeEditHtml = html(storeNames);
     const roleHtml = protectedRole || deleted
       ? `<span class="tag used">${roleLabel(row.role)}</span>`
       : `
@@ -1116,7 +1139,7 @@ async function createAdminUser() {
       body: JSON.stringify({
         phone: $('newAdminPhone').value,
         name: $('newAdminName').value,
-        store_ids: selectedOptionValues($('newAdminStore')),
+        store_id: $('newAdminStore').value,
         role: $('newAdminRole').value,
       }),
     });
@@ -1135,14 +1158,6 @@ async function updateAdminUserRole(userId, role) {
   await api('/api/admin-users/' + encodeURIComponent(userId), {
     method: 'PATCH',
     body: JSON.stringify({ role }),
-  });
-  await loadAdminUsers();
-}
-
-async function updateAdminUserStores(userId, select) {
-  await api('/api/admin-users/' + encodeURIComponent(userId), {
-    method: 'PATCH',
-    body: JSON.stringify({ store_ids: selectedOptionValues(select) }),
   });
   await loadAdminUsers();
 }
