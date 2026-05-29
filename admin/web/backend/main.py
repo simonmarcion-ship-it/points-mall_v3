@@ -21,7 +21,7 @@ import requests
 
 from .auth import authenticate, clear_session_cookie, current_username, hash_password, require_login, set_session_cookie, verify_password
 from .cargeer import lookup_cargeer_options_by_phone
-from .config import AUTO_IMPORT, DB_PATH, WEB_DIR, WECHAT_APPID, WECHAT_APPSECRET
+from .config import AUTO_IMPORT, DB_PATH, SUPER_ADMIN_PASSWORD, SUPER_ADMIN_USERNAME, WEB_DIR, WECHAT_APPID, WECHAT_APPSECRET
 from .database import db_session, row_to_dict, rows_to_dicts
 from .schema import create_schema
 from .sms import SmsError, normalize_phone, send_sms_code, verify_sms_code
@@ -160,6 +160,7 @@ def startup() -> None:
             initialize_database(conn)
         else:
             create_schema(conn)
+        ensure_super_admin(conn)
 
 
 @app.on_event("startup")
@@ -179,6 +180,53 @@ async def shutdown_coupon_expiry_task() -> None:
 
 def now_text() -> str:
     return datetime.now(APP_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def ensure_super_admin(conn) -> None:
+    username = SUPER_ADMIN_USERNAME.strip()
+    password = SUPER_ADMIN_PASSWORD.strip()
+    if not username or not password:
+        return
+    now = now_text()
+    existing = row_to_dict(
+        conn.execute("SELECT id FROM admin_users WHERE username = ?", (username,)).fetchone()
+    )
+    if existing:
+        conn.execute(
+            """
+            UPDATE admin_users
+            SET password_hash = ?, display_name = ?, role = 'super_admin', enabled = 1,
+                registered_at = COALESCE(registered_at, ?), deleted_at = NULL
+            WHERE username = ?
+            """,
+            (hash_password(password), username, now, username),
+        )
+        return
+    legacy = row_to_dict(
+        conn.execute("SELECT id FROM admin_users WHERE id = 'SUPER_ADMIN'").fetchone()
+    )
+    if legacy:
+        conn.execute(
+            """
+            UPDATE admin_users
+            SET username = ?, password_hash = ?, display_name = ?, phone = '',
+                store_id = NULL, store_name = '', role = 'super_admin', enabled = 1,
+                registered_at = COALESCE(registered_at, ?), deleted_at = NULL
+            WHERE id = 'SUPER_ADMIN'
+            """,
+            (username, hash_password(password), username, now),
+        )
+        return
+    conn.execute(
+        """
+        INSERT INTO admin_users (
+            id, username, password_hash, display_name, phone, store_id, store_name,
+            role, enabled, created_at, registered_at, last_login_at, deleted_at
+        )
+        VALUES (?, ?, ?, ?, '', NULL, '', 'super_admin', 1, ?, ?, NULL, NULL)
+        """,
+        ("SUPER_ADMIN", username, hash_password(password), username, now, now),
+    )
 
 
 def get_wechat_access_token() -> str:
@@ -303,7 +351,7 @@ def current_admin_profile(conn, username: str) -> dict:
         "name": username,
         "store_id": None,
         "store_name": None,
-        "role": "admin",
+        "role": "super_admin",
     }
 
 
@@ -313,14 +361,17 @@ def admin_role(conn, username: str) -> str:
 
 def role_permissions(role: str) -> dict:
     role = role or "issuer"
+    is_super_admin = role == "super_admin"
+    is_admin = role in {"super_admin", "admin"}
     return {
-        "can_admin_users": role == "admin",
-        "can_issue": role in {"admin", "issuer"},
-        "can_create_customer": role in {"admin", "issuer"},
-        "can_void": role in {"admin", "issuer"},
-        "can_redeem": role in {"admin", "redeemer"},
-        "can_manage_templates": role in {"admin", "issuer"},
-        "can_manage_stores": role == "admin",
+        "can_admin_users": is_admin,
+        "can_promote_admin": is_super_admin,
+        "can_issue": is_admin or role == "issuer",
+        "can_create_customer": is_admin or role == "issuer",
+        "can_void": is_admin or role == "issuer",
+        "can_redeem": is_admin or role == "redeemer",
+        "can_manage_templates": is_admin,
+        "can_manage_stores": is_admin,
     }
 
 
@@ -657,7 +708,7 @@ def login(req: LoginRequest, response: Response) -> dict:
             ).fetchone()
         )
         if user and verify_password(req.password, user.get("password_hash")):
-            if user.get("role") != "admin" and not user.get("registered_at"):
+            if user.get("role") not in {"admin", "super_admin"} and not user.get("registered_at"):
                 raise HTTPException(status_code=403, detail="请先用手机号验证码完成注册")
             conn.execute("UPDATE admin_users SET last_login_at = ? WHERE username = ?", (now_text(), username))
             set_session_cookie(response, username)
@@ -672,9 +723,9 @@ def login(req: LoginRequest, response: Response) -> dict:
             "name": username,
             "store_id": None,
             "store_name": "",
-            "role": "admin",
+            "role": "super_admin",
         }
-        profile["permissions"] = role_permissions("admin")
+        profile["permissions"] = role_permissions("super_admin")
         return {"username": username, "profile": profile}
 
     raise HTTPException(status_code=401, detail="用户名或密码错误")
@@ -921,7 +972,7 @@ def customer_detail(wid: str, request: Request) -> dict:
 
 @app.patch("/api/customers/{wid}")
 def update_customer(wid: str, req: UpdateCustomerRequest, request: Request) -> dict:
-    operator = require_role(request, {"admin", "issuer"})
+    operator = require_role(request, {"admin", "super_admin", "issuer"})
     with db_session() as conn:
         customer = require_customer(conn, wid)
         updates = []
@@ -976,7 +1027,7 @@ def update_customer(wid: str, req: UpdateCustomerRequest, request: Request) -> d
 
 @app.post("/api/customers")
 def create_customer(req: CreateCustomerRequest, request: Request) -> dict:
-    operator = require_role(request, {"admin", "issuer"})
+    operator = require_role(request, {"admin", "super_admin", "issuer"})
     phone = req.phone.strip()
     if not phone:
         raise HTTPException(status_code=400, detail="请输入手机号")
@@ -1056,13 +1107,38 @@ def create_customer(req: CreateCustomerRequest, request: Request) -> dict:
 
 
 @app.get("/api/customer-lookup")
-def customer_lookup(request: Request, q: str, limit: int = 10) -> dict:
+def customer_lookup(request: Request, q: str, limit: int = 10, mode: str = "") -> dict:
     require_login(request)
     keyword_text = q.strip()
     if not keyword_text:
         return {"items": []}
 
     limit = max(1, min(limit, 20))
+    if mode == "vin":
+        vin = normalize_vin(keyword_text)
+        if not vin:
+            return {"items": []}
+        with db_session() as conn:
+            rows = conn.execute(
+                """
+                SELECT wid, phone, nickname, real_name, vin, plate_no, store_name, level_name, member_card,
+                       available_point, total_point, customer_status
+                FROM customers
+                WHERE COALESCE(TRIM(vin), '') != ''
+                  AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) LIKE ?
+                ORDER BY
+                    CASE
+                        WHEN UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ? THEN 0
+                        ELSE 1
+                    END,
+                    became_customer_at DESC,
+                    wid DESC
+                LIMIT ?
+                """,
+                (f"%{vin}%", vin, limit),
+            ).fetchall()
+            return {"items": rows_to_dicts(rows)}
+
     keyword = f"%{keyword_text}%"
     with db_session() as conn:
         rows = conn.execute(
@@ -1137,7 +1213,7 @@ def stores_all(request: Request) -> dict:
 
 @app.get("/api/admin-users")
 def admin_users(request: Request) -> dict:
-    require_role(request, {"admin"})
+    require_role(request, {"admin", "super_admin"})
     with db_session() as conn:
         rows = conn.execute(
             """
@@ -1152,7 +1228,7 @@ def admin_users(request: Request) -> dict:
 
 @app.post("/api/admin-users")
 def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
-    require_role(request, {"admin"})
+    require_role(request, {"admin", "super_admin"})
     allowed_roles = {"issuer", "redeemer"}
     try:
         phone = normalize_phone(req.phone)
@@ -1241,18 +1317,23 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
 
 @app.patch("/api/admin-users/{user_id}")
 def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Request) -> dict:
-    username = require_role(request, {"admin"})
-    allowed_roles = {"issuer", "redeemer"}
+    username = require_role(request, {"admin", "super_admin"})
     with db_session() as conn:
+        operator_role = admin_role(conn, username)
+        allowed_roles = {"issuer", "redeemer", "admin"} if operator_role == "super_admin" else {"issuer", "redeemer"}
         user = row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())
         if not user:
             raise HTTPException(status_code=404, detail="人员不存在")
         if user.get("deleted_at"):
             raise HTTPException(status_code=400, detail="该人员已被删除")
+        if user.get("role") == "super_admin":
+            raise HTTPException(status_code=400, detail="超级管理员不能在这里修改")
+        if operator_role != "super_admin" and user.get("role") == "admin":
+            raise HTTPException(status_code=403, detail="管理员不能修改其他管理员")
         if req.role is not None:
             role = req.role.strip()
             if role not in allowed_roles:
-                raise HTTPException(status_code=400, detail="管理员权限请直接在数据库维护")
+                raise HTTPException(status_code=400, detail="当前账号不能分配该权限")
             conn.execute("UPDATE admin_users SET role = ? WHERE id = ?", (role, user_id))
         if req.enabled is not None:
             if user.get("username") == username and not req.enabled:
@@ -1263,15 +1344,18 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
 
 @app.delete("/api/admin-users/{user_id}")
 def delete_admin_user(user_id: str, request: Request) -> dict:
-    username = require_role(request, {"admin"})
+    username = require_role(request, {"admin", "super_admin"})
     with db_session() as conn:
+        operator_role = admin_role(conn, username)
         user = row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())
         if not user:
             raise HTTPException(status_code=404, detail="人员不存在")
         if user.get("username") == username:
             raise HTTPException(status_code=400, detail="不能删除当前登录账号")
-        if user.get("role") == "admin":
-            raise HTTPException(status_code=400, detail="管理员账号请直接在数据库维护")
+        if user.get("role") == "super_admin":
+            raise HTTPException(status_code=400, detail="不能删除超级管理员")
+        if operator_role != "super_admin" and user.get("role") == "admin":
+            raise HTTPException(status_code=403, detail="管理员不能删除其他管理员")
         if user.get("deleted_at"):
             return {"user": user, "deleted": False}
         conn.execute(
@@ -1290,7 +1374,7 @@ def delete_admin_user(user_id: str, request: Request) -> dict:
 
 @app.post("/api/stores")
 def create_store(req: CreateStoreRequest, request: Request) -> dict:
-    require_role(request, {"admin"})
+    require_role(request, {"admin", "super_admin"})
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="请输入门店名称")
@@ -1316,7 +1400,7 @@ def create_store(req: CreateStoreRequest, request: Request) -> dict:
 
 @app.patch("/api/stores/{store_id}")
 def update_store(store_id: str, req: UpdateStoreRequest, request: Request) -> dict:
-    require_role(request, {"admin"})
+    require_role(request, {"admin", "super_admin"})
     with db_session() as conn:
         store = row_to_dict(conn.execute("SELECT * FROM stores WHERE id = ?", (store_id,)).fetchone())
         if not store:
@@ -1327,18 +1411,19 @@ def update_store(store_id: str, req: UpdateStoreRequest, request: Request) -> di
 
 
 @app.get("/api/templates")
-def templates(request: Request) -> dict:
+def templates(request: Request, include_disabled: bool = False) -> dict:
     require_login(request)
     with db_session() as conn:
+        where = "" if include_disabled else "WHERE enabled = 1"
         rows = conn.execute(
-            "SELECT * FROM coupon_templates WHERE enabled = 1 ORDER BY name, id"
+            f"SELECT * FROM coupon_templates {where} ORDER BY enabled DESC, name, id"
         ).fetchall()
         return {"items": rows_to_dicts(rows)}
 
 
 @app.post("/api/templates")
 def create_template(req: CreateTemplateRequest, request: Request) -> dict:
-    operator = require_role(request, {"admin", "issuer"})
+    operator = require_role(request, {"admin", "super_admin"})
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="请输入券模板名称")
@@ -1372,7 +1457,7 @@ def create_template(req: CreateTemplateRequest, request: Request) -> dict:
 
 @app.patch("/api/templates/{template_id}")
 def update_template(template_id: str, req: UpdateTemplateRequest, request: Request) -> dict:
-    operator = require_role(request, {"admin", "issuer"})
+    operator = require_role(request, {"admin", "super_admin"})
     with db_session() as conn:
         template = row_to_dict(conn.execute("SELECT * FROM coupon_templates WHERE id = ?", (template_id,)).fetchone())
         if not template:
@@ -1409,7 +1494,7 @@ def update_template(template_id: str, req: UpdateTemplateRequest, request: Reque
 
 @app.post("/api/coupons/issue")
 def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
-    username = require_role(request, {"admin", "issuer"})
+    username = require_role(request, {"admin", "super_admin", "issuer"})
     if req.quantity < 1 or req.quantity > 100:
         raise HTTPException(status_code=400, detail="发券数量必须在 1-100 之间")
     validity_type = (req.validity_type or "days").strip()
@@ -1517,7 +1602,7 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
 
 @app.post("/api/coupons/redeem")
 def redeem_coupon(req: RedeemCouponRequest, request: Request) -> dict:
-    username = require_role(request, {"admin", "redeemer"})
+    username = require_role(request, {"admin", "super_admin", "redeemer"})
     code = req.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="请输入券码")
@@ -1612,7 +1697,7 @@ def coupon_preview(code: str, request: Request) -> dict:
 
 @app.post("/api/coupons/void")
 def void_coupon(req: VoidCouponRequest, request: Request) -> dict:
-    username = require_role(request, {"admin", "issuer"})
+    username = require_role(request, {"admin", "super_admin", "issuer"})
     code = req.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="请输入券码")

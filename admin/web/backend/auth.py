@@ -56,6 +56,8 @@ def verify_session_token(token: str | None) -> str | None:
 
 
 def authenticate(username: str, password: str) -> bool:
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+        return False
     return hmac.compare_digest(username, ADMIN_USERNAME) and hmac.compare_digest(password, ADMIN_PASSWORD)
 
 

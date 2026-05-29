@@ -69,6 +69,7 @@ function can(permission) {
 
 function roleLabel(role) {
   return {
+    super_admin: '超级管理员',
     admin: '管理员',
     issuer: '发券人员',
     redeemer: '核销人员',
@@ -218,6 +219,7 @@ window.selectIssueTemplate = selectIssueTemplate;
 window.startEditCustomerDetail = startEditCustomerDetail;
 window.cancelEditCustomerDetail = cancelEditCustomerDetail;
 window.deleteAdminUser = deleteAdminUser;
+window.toggleTemplate = toggleTemplate;
 
 function formatDateTime(value) {
   const text = safe(value);
@@ -653,6 +655,7 @@ function fillIssueCustomer(customer) {
   selectedWid = customer.wid || '';
   $('issueWid').value = safe(customer.wid) === '-' ? '' : customer.wid;
   $('issuePhone').value = safe(customer.phone) === '-' ? '' : customer.phone;
+  if ($('issueVin')) $('issueVin').value = safe(customer.vin) === '-' ? '' : customer.vin;
   $('issueNickname').value = safe(customer.nickname) === '-' ? '' : customer.nickname;
   $('issueStore').value = safe(customer.store_name) === '-' ? '' : customer.store_name;
   $('issueLevel').value = safe(customer.level_name || customer.member_card) === '-' ? '' : (customer.level_name || customer.member_card || '');
@@ -665,6 +668,7 @@ function clearIssueCustomerFields() {
   selectedWid = '';
   issueLookupRows = [];
   $('issueWid').value = '';
+  $('issuePhone').value = '';
   $('issueNickname').value = '';
   $('issueStore').value = '';
   $('issueLevel').value = '';
@@ -672,7 +676,7 @@ function clearIssueCustomerFields() {
 }
 
 async function lookupIssueCustomer() {
-  const q = $('issuePhone').value.trim();
+  const q = normalizeVin($('issueVin').value);
   const box = $('issueCustomerResults');
   clearIssueCustomerFields();
   if (!q) {
@@ -683,7 +687,7 @@ async function lookupIssueCustomer() {
 
   box.classList.remove('hidden');
   box.innerHTML = '<div class="lookup-empty"><span class="spinner"></span> 搜索中...</div>';
-  const data = await api('/api/customer-lookup?q=' + encodeURIComponent(q));
+  const data = await api('/api/customer-lookup?mode=vin&q=' + encodeURIComponent(q));
   if (!data.items.length) {
     box.innerHTML = '<div class="lookup-empty">没有找到匹配客户</div>';
     return;
@@ -711,7 +715,7 @@ function scheduleIssueCustomerLookup() {
   clearTimeout(customerLookupTimer);
   clearIssueCustomerFields();
   const box = $('issueCustomerResults');
-  const q = $('issuePhone').value.trim();
+  const q = normalizeVin($('issueVin').value);
   if (!q) {
     box.classList.add('hidden');
     box.innerHTML = '';
@@ -848,22 +852,23 @@ function selectNewCustomerCargeerRow(index) {
 }
 
 async function loadTemplates() {
-  const data = await api('/api/templates');
-  issueTemplateRows = data.items || [];
-  $('issueTemplate').innerHTML = data.items.map((row) => `<option value="${row.id}">${safe(row.name)}</option>`).join('');
+  const data = await api(can('can_manage_templates') ? '/api/templates?include_disabled=true' : '/api/templates');
+  const allRows = data.items || [];
+  issueTemplateRows = allRows.filter((row) => Number(row.enabled) === 1);
+  $('issueTemplate').innerHTML = issueTemplateRows.map((row) => `<option value="${row.id}">${safe(row.name)}</option>`).join('');
   renderIssueTemplateOptions();
   syncIssueTemplateDisplay();
-  $('templateRows').innerHTML = data.items.map((row) => `
-    <tr>
+  $('templateRows').innerHTML = allRows.map((row) => `
+    <tr class="${Number(row.enabled) === 1 ? '' : 'muted-row'}">
       <td data-label="模板ID">${safe(row.id)}</td>
+      <td data-label="状态">${Number(row.enabled) === 1 ? statusTag('unused', '启用') : statusTag('voided', '停用')}</td>
       <td data-label="名称"><input id="templateName-${safe(row.id)}" value="${html(row.name)}" /></td>
       <td data-label="类型"><input id="templateType-${safe(row.id)}" value="${html(row.coupon_type)}" /></td>
-      <td data-label="规则"><input id="templateRule-${safe(row.id)}" value="${html(row.rule_text)}" /></td>
-      <td data-label="操作"><button class="secondary" onclick="updateTemplate('${safe(row.id)}')">保存</button></td>
+      <td data-label="使用规则"><textarea id="templateRule-${safe(row.id)}" rows="4">${html(row.rule_text)}</textarea></td>
+      <td data-label="操作"><div class="row-actions"><button class="secondary" onclick="updateTemplate('${safe(row.id)}')">保存</button><button class="${Number(row.enabled) === 1 ? 'danger' : 'secondary'}" onclick="toggleTemplate('${safe(row.id)}', ${Number(row.enabled) === 1 ? 'false' : 'true'})">${Number(row.enabled) === 1 ? '停用' : '启用'}</button></div></td>
     </tr>
   `).join('');
 }
-
 function issueTemplateOptionText(row) {
   return [row.name, row.coupon_type, row.id].filter(Boolean).join(' / ');
 }
@@ -957,6 +962,16 @@ async function updateTemplate(templateId) {
   await loadTemplates();
 }
 
+async function toggleTemplate(templateId, enabled) {
+  const action = enabled ? '启用' : '停用';
+  if (!confirm('确认' + action + '这个券模板？')) return;
+  await api('/api/templates/' + encodeURIComponent(templateId), {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+  await loadTemplates();
+}
+
 async function loadStores() {
   const data = await api('/api/stores');
   const options = data.items.map((row) => (
@@ -1003,15 +1018,18 @@ async function loadAdminUsers() {
     const registerHtml = deleted
       ? '<span class="tag voided">已删除</span>'
       : (row.registered_at ? '<span class="tag used">已注册</span>' : '<span class="tag expired">待注册</span>');
-    const roleHtml = row.role === 'admin'
-      ? '<span class="tag used">管理员</span>'
-      : (deleted ? roleLabel(row.role) : `
+    const canPromoteAdmin = can('can_promote_admin');
+    const protectedRole = row.role === 'super_admin' || (!canPromoteAdmin && row.role === 'admin');
+    const roleHtml = protectedRole || deleted
+      ? `<span class="tag used">${roleLabel(row.role)}</span>`
+      : `
         <select onchange="updateAdminUserRole('${safe(row.id)}', this.value)">
           <option value="issuer" ${row.role === 'issuer' || row.role === 'staff' ? 'selected' : ''}>发券人员</option>
           <option value="redeemer" ${row.role === 'redeemer' ? 'selected' : ''}>核销人员</option>
-        </select>`);
-    const actionHtml = row.role === 'admin'
-      ? '<span class="subtle">数据库维护</span>'
+          ${canPromoteAdmin ? `<option value="admin" ${row.role === 'admin' ? 'selected' : ''}>管理员</option>` : ''}
+        </select>`;
+    const actionHtml = protectedRole
+      ? '<span class="subtle">受保护账号</span>'
       : deleted
       ? '<span class="subtle">可用同手机号重新新增</span>'
       : `<button class="secondary" onclick="toggleAdminUser('${safe(row.id)}', ${row.enabled ? 'false' : 'true'}, '${html(row.display_name || row.phone || row.username)}')">${row.enabled ? '停用' : '启用'}</button>
@@ -1656,8 +1674,8 @@ async function init() {
   ['storeFilter', 'becameFrom', 'becameTo', 'joinedFrom', 'joinedTo', 'pageSize'].forEach((id) => {
     $(id).addEventListener('change', () => searchCustomers());
   });
-  $('issuePhone').addEventListener('input', scheduleIssueCustomerLookup);
-  $('issuePhone').addEventListener('keydown', (event) => {
+  $('issueVin').addEventListener('input', scheduleIssueCustomerLookup);
+  $('issueVin').addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
       lookupIssueCustomer();

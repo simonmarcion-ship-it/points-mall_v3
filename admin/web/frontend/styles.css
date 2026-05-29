@@ -55,6 +55,14 @@ tr.muted-row td { color: #98a2b3; }
 .template-option:hover { background: #f8fbff; color: #1d4ed8; }
 .template-option-title { font-weight: 600; }
 .template-option-rule { color: #667085; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.template-create-form textarea { min-height: 96px; resize: vertical; }
+.template-table { min-width: 980px; }
+.template-table th:nth-child(1) { width: 180px; }
+.template-table th:nth-child(2) { width: 86px; }
+.template-table th:nth-child(3) { width: 180px; }
+.template-table th:nth-child(4) { width: 130px; }
+.template-table th:nth-child(6) { width: 150px; }
+.template-table textarea { width: 100%; min-height: 96px; resize: vertical; line-height: 1.5; }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .two-column-layout { display: grid; grid-template-columns: minmax(320px, .8fr) minmax(620px, 1.4fr); gap: 16px; align-items: start; }
 .coupon-workspace { display: grid; grid-template-columns: minmax(360px, .9fr) minmax(560px, 1.4fr); gap: 16px; align-items: start; }

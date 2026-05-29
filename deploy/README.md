@@ -18,7 +18,13 @@ cp deploy/env.example deploy/.env
 
 ```bash
 MALL_SESSION_SECRET=换成一串随机字符串
+MALL_SUPER_ADMIN_USERNAME=你的超级管理员账号
+MALL_SUPER_ADMIN_PASSWORD=你的超级管理员密码
 ```
+
+`MALL_SUPER_ADMIN_USERNAME` / `MALL_SUPER_ADMIN_PASSWORD` 会在后台启动时写入或更新一个“超级管理员”账号。超级管理员可以把客服人员提升为管理员；管理员只能维护发券人员、核销人员等下级权限。
+
+旧的 `MALL_ADMIN_USERNAME` / `MALL_ADMIN_PASSWORD` 仅作为兼容兜底，未显式配置时不会生效。
 
 如需启用 Cargeer 异步补全，再配置：
 
@@ -68,6 +74,15 @@ cd /root/points_mall/points-mall_v3
 git pull
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --build
 ```
+
+如果本次上线包含超级管理员改动，先确认服务器 `deploy/.env` 已配置：
+
+```bash
+MALL_SUPER_ADMIN_USERNAME=你的超级管理员账号
+MALL_SUPER_ADMIN_PASSWORD=你的超级管理员密码
+```
+
+启动后用超级管理员登录，在“客服人员维护”里把需要的人提升为管理员。历史内置的 `wangting` 管理员会被迁移为已删除状态，不会再作为默认管理员使用。
 
 ## 停止 v3
 
