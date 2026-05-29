@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>积分商城后台</title>
-  <link rel="stylesheet" href="assets/styles.css?v=20260528-admin-staff-register" />
+  <link rel="stylesheet" href="assets/styles.css?v=20260529-staff-register-password" />
 </head>
 <body>
   <section id="loginView" class="login-view hidden">
@@ -132,7 +132,7 @@
       </section>
 
       <section id="view-stores" class="view hidden">
-        <div class="panel" data-permission="can_manage_templates">
+        <div class="panel">
           <div class="panel-head">
             <div class="panel-title">门店总表维护</div>
             <button class="secondary" onclick="loadStores()">刷新</button>
@@ -276,7 +276,7 @@
       </section>
 
       <section id="view-templates" class="view hidden">
-        <div class="panel">
+        <div class="panel" data-permission="can_manage_templates">
           <div class="panel-head"><div class="panel-title">新增券模板</div></div>
           <div class="panel-body">
             <div class="form-grid">
@@ -312,6 +312,6 @@
     <button type="button" class="danger" data-permission="can_void" onclick="confirmContextCouponVoid()">作废</button>
   </div>
   <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-  <script src="assets/app.js?v=20260528-template-custom-dropdown"></script>
+  <script src="assets/app.js?v=20260529-staff-register-password"></script>
 </body>
 </html>
