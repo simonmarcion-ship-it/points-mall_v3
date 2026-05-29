@@ -1484,7 +1484,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                 """,
                 (phone,),
             ).fetchone()
-        )
+        ) or {}
         existing = row_to_dict(
             conn.execute(
                 """
