@@ -163,7 +163,7 @@
             <div class="form-grid">
               <label>手机号<input id="newAdminPhone" inputmode="tel" placeholder="用于注册和登录" /></label>
               <label>姓名<input id="newAdminName" placeholder="客服姓名" /></label>
-              <label>所属门店<select id="newAdminStore"></select></label>
+              <label>所属门店<select id="newAdminStore" multiple size="4"></select></label>
               <label>权限<select id="newAdminRole"><option value="issuer">发券人员</option><option value="redeemer">核销人员</option></select></label>
             </div>
             <div class="actions"><button type="button" onclick="createAdminUser()">新增客服人员</button></div>
@@ -217,6 +217,7 @@
               <label>姓名<input id="issueNickname" placeholder="选择客户后自动填充" readonly /></label>
               <label>客户归属门店<input id="issueStore" placeholder="自动填充" readonly /></label>
               <label>等级<input id="issueLevel" placeholder="自动填充" readonly /></label>
+              <label>本次发券门店<select id="issueOperationStore"></select></label>
               <label class="wide">券模板
                 <input id="issueTemplateSearch" placeholder="选择或输入关键词搜索券模板" autocomplete="off" />
                 <div id="issueTemplateOptions" class="template-options hidden"></div>
@@ -255,6 +256,7 @@
           <div class="panel-body">
             <div class="form-grid template-create-form">
               <label>券码<input id="redeemCode" placeholder="输入券码" /></label>
+              <label id="redeemStoreLabel" class="hidden">本次核销门店<select id="redeemStore"></select></label>
               <label class="wide">备注<input id="redeemRemark" placeholder="备注" /></label>
             </div>
             <div class="actions redeem-actions">

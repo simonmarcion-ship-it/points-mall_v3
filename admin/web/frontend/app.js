@@ -22,6 +22,7 @@ let lastRedeemLookupCode = '';
 let wechatScanConfigured = false;
 let wechatScanConfigPromise = null;
 let registerSmsTimer = null;
+let lastRedeemStoreOptions = [];
 
 function scrollWindowTop() {
   requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
@@ -54,6 +55,7 @@ function showApp(username, profile = {}) {
   $('currentStore').textContent = safe(profile.store_name);
   $('operator').value = displayName || username;
   updateIssueStoreScopeLabels();
+  renderOperationStoreOptions();
   $('loginView').classList.add('hidden');
   $('appView').classList.remove('hidden');
   applyPermissions();
@@ -98,6 +100,21 @@ function updateIssueStoreScopeLabels() {
     const customerStore = $('issueStore') ? $('issueStore').value.trim() : '';
     customerOption.textContent = customerStore ? `客户归属门店（${customerStore}）` : '客户归属门店';
   }
+}
+
+function profileStores() {
+  return currentAdminProfile.stores || [];
+}
+
+function renderOperationStoreOptions() {
+  const stores = profileStores();
+  if ($('issueOperationStore')) {
+    $('issueOperationStore').innerHTML = stores.map((row) => `<option value="${html(row.id || '')}">${html(row.name || '')}</option>`).join('');
+  }
+}
+
+function selectedOptionValues(select) {
+  return Array.from(select?.selectedOptions || []).map((option) => option.value).filter(Boolean);
 }
 
 async function login(event) {
@@ -503,6 +520,9 @@ async function saveCustomerDetail() {
     msg.className = 'message ok';
     msg.textContent = '客户资料已保存';
     renderCustomerDetail(data.customer);
+    if (data.customer?.vin) {
+      fillIssueCustomer(data.customer);
+    }
     await searchCustomers(false);
   } catch (err) {
     msg.className = 'message error';
@@ -1011,7 +1031,8 @@ async function loadStores() {
   )).join('');
   $('storeFilter').innerHTML = `<option value="">????</option>${options}`;
   $('newCustomerStore').innerHTML = `<option value="">?????</option>${options}`;
-  if ($('newAdminStore')) $('newAdminStore').innerHTML = `<option value="">请选择</option>${storeIdOptions}`;
+  if ($('newAdminStore')) $('newAdminStore').innerHTML = storeIdOptions;
+  renderOperationStoreOptions();
   renderIssueStorePicker(data.items.map((row) => ({
     name: row.name,
     count: row.customer_count,
@@ -1049,6 +1070,12 @@ async function loadAdminUsers() {
       : (row.registered_at ? '<span class="tag used">已注册</span>' : '<span class="tag expired">待注册</span>');
     const canPromoteAdmin = can('can_promote_admin');
     const protectedRole = row.role === 'super_admin' || (!canPromoteAdmin && row.role === 'admin');
+    const storeNames = row.store_names?.length ? row.store_names.join('、') : row.store_name;
+    const storeEditHtml = protectedRole || deleted
+      ? html(storeNames)
+      : `<select multiple size="3" onchange="updateAdminUserStores('${safe(row.id)}', this)">
+          ${Array.from($('newAdminStore')?.options || []).map((option) => `<option value="${html(option.value)}" ${(row.store_ids || []).includes(option.value) ? 'selected' : ''}>${html(option.textContent)}</option>`).join('')}
+        </select>`;
     const roleHtml = protectedRole || deleted
       ? `<span class="tag used">${roleLabel(row.role)}</span>`
       : `
@@ -1067,7 +1094,7 @@ async function loadAdminUsers() {
     <tr class="${deleted ? 'muted-row' : ''}">
       <td data-label="姓名">${html(row.display_name || row.username)}</td>
       <td data-label="手机号">${html(row.phone || row.username)}</td>
-      <td data-label="所属门店">${html(row.store_name)}</td>
+      <td data-label="所属门店">${storeEditHtml}</td>
       <td data-label="权限">${roleHtml}</td>
       <td data-label="状态">${statusHtml}</td>
       <td data-label="注册状态">${registerHtml}</td>
@@ -1089,7 +1116,7 @@ async function createAdminUser() {
       body: JSON.stringify({
         phone: $('newAdminPhone').value,
         name: $('newAdminName').value,
-        store_id: $('newAdminStore').value,
+        store_ids: selectedOptionValues($('newAdminStore')),
         role: $('newAdminRole').value,
       }),
     });
@@ -1108,6 +1135,14 @@ async function updateAdminUserRole(userId, role) {
   await api('/api/admin-users/' + encodeURIComponent(userId), {
     method: 'PATCH',
     body: JSON.stringify({ role }),
+  });
+  await loadAdminUsers();
+}
+
+async function updateAdminUserStores(userId, select) {
+  await api('/api/admin-users/' + encodeURIComponent(userId), {
+    method: 'PATCH',
+    body: JSON.stringify({ store_ids: selectedOptionValues(select) }),
   });
   await loadAdminUsers();
 }
@@ -1186,7 +1221,10 @@ function issueCustomerStoreName() {
 function currentIssueScopeSelectedNames() {
   const scope = $('issueUsableStoreScope') ? $('issueUsableStoreScope').value : 'all';
   if (scope === 'all') return issueStoreOptions.map((item) => item.name);
-  if (scope === 'current') return currentAdminProfile.store_name ? [currentAdminProfile.store_name] : [];
+  if (scope === 'current') {
+    const selected = $('issueOperationStore')?.selectedOptions?.[0]?.textContent || currentAdminProfile.store_name;
+    return selected ? [selected] : [];
+  }
   if (scope === 'customer_store') return issueCustomerStoreName() ? [issueCustomerStoreName()] : [];
   return issueSelectedStores;
 }
@@ -1337,6 +1375,9 @@ async function issueCoupon() {
     if ($('issueUsableStoreScope').value === 'selected' && selectedIssueUsableStoreNames().length === 0) {
       throw new Error('选择指定门店时，请至少选择一个可用门店');
     }
+    if (profileStores().length > 1 && !$('issueOperationStore').value) {
+      throw new Error('请选择本次发券门店');
+    }
     if (!confirmIssueCouponDetail()) {
       msg.textContent = '已取消发券';
       return;
@@ -1354,6 +1395,7 @@ async function issueCoupon() {
         remark: $('issueRemark').value,
         usable_store_scope: $('issueUsableStoreScope').value,
         usable_store_names: selectedIssueUsableStoreNames(),
+        operation_store_id: $('issueOperationStore') ? $('issueOperationStore').value : '',
       }),
     });
     msg.className = 'message ok';
@@ -1377,6 +1419,7 @@ function confirmIssueCouponDetail() {
   const scopeText = $('issueUsableStoreScope').selectedOptions[0]?.textContent || '-';
   const stores = currentIssueScopeSelectedNames();
   const storeText = stores.length ? stores.join('、') : scopeText;
+  const operationStore = $('issueOperationStore')?.selectedOptions?.[0]?.textContent || '-';
   const customer = [
     $('issueNickname').value || '-',
     $('issuePhone').value || '-',
@@ -1386,6 +1429,7 @@ function confirmIssueCouponDetail() {
     '',
     `客户：${customer}`,
     `客户归属门店：${$('issueStore').value || '-'}`,
+    `本次发券门店：${operationStore}`,
     `券模板：${templateText}`,
     `使用规则：${templateRule}`,
     `数量：${quantity}`,
@@ -1409,6 +1453,11 @@ async function redeemCoupon() {
     msg.textContent = `该券当前不可核销：${coupon.status_text || coupon.status || status}`;
     return;
   }
+  if (lastRedeemStoreOptions.length > 1 && !$('redeemStore').value) {
+    msg.className = 'message error';
+    msg.textContent = '请选择本次核销门店';
+    return;
+  }
   if (!confirmRedeemCouponDetail(coupon)) {
     msg.className = 'message';
     msg.textContent = '已取消核销';
@@ -1419,7 +1468,12 @@ async function redeemCoupon() {
   try {
     const data = await api('/api/coupons/redeem', {
       method: 'POST',
-      body: JSON.stringify({ code: $('redeemCode').value, operator: $('operator').value, remark: $('redeemRemark').value }),
+      body: JSON.stringify({
+        code: $('redeemCode').value,
+        operator: $('operator').value,
+        remark: $('redeemRemark').value,
+        redeem_store_id: $('redeemStore') ? $('redeemStore').value : '',
+      }),
     });
     msg.className = 'message ok';
     msg.textContent = `核销成功：${data.coupon.template_name}，客户 ${data.coupon.customer_wid}`;
@@ -1463,6 +1517,7 @@ function couponCodeFromScan(value) {
 function renderRedeemPreview(coupon) {
   const status = normalizeCouponStatus(coupon);
   const customerName = coupon.customer_real_name || coupon.customer_nickname || '-';
+  const redeemStoreText = $('redeemStore')?.selectedOptions?.[0]?.textContent || (lastRedeemStoreOptions[0]?.name || '-');
   $('redeemPreview').classList.remove('hidden');
   $('redeemPreview').innerHTML = `
     <div class="kv coupon-detail-grid">
@@ -1473,6 +1528,7 @@ function renderRedeemPreview(coupon) {
       <div class="key">客户门店</div><div>${safe(coupon.customer_store_name)}</div>
       <div class="key">有效期</div><div>${safe(coupon.valid_period)}</div>
       <div class="key">使用门店</div><div>${safe(coupon.usable_store_names)}</div>
+      <div class="key">本次核销门店</div><div>${safe(redeemStoreText)}</div>
     </div>
   `;
 }
@@ -1494,6 +1550,11 @@ async function previewRedeemCoupon(codeValue = '') {
   msg.textContent = '正在查询券码...';
   try {
     const data = await api('/api/coupons/' + encodeURIComponent(code) + '/preview');
+    lastRedeemStoreOptions = data.redeem_store_options || [];
+    if ($('redeemStore')) {
+      $('redeemStore').innerHTML = lastRedeemStoreOptions.map((row) => `<option value="${html(row.id || '')}">${html(row.name || '')}</option>`).join('');
+      $('redeemStoreLabel').classList.toggle('hidden', lastRedeemStoreOptions.length <= 1);
+    }
     renderRedeemPreview(data.coupon);
     msg.className = data.redeemable ? 'message ok' : 'message error';
     msg.textContent = data.redeemable ? '券码可核销，请确认信息后点击确认核销' : data.message;
@@ -1510,6 +1571,8 @@ function scheduleRedeemCouponPreview() {
   const code = couponCodeFromScan($('redeemCode').value);
   if (!code) {
     lastRedeemLookupCode = '';
+    lastRedeemStoreOptions = [];
+    if ($('redeemStoreLabel')) $('redeemStoreLabel').classList.add('hidden');
     $('redeemPreview').classList.add('hidden');
     $('redeemPreview').innerHTML = '';
     $('redeemMessage').className = 'message';

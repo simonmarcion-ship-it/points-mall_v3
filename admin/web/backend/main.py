@@ -55,12 +55,16 @@ class IssueCouponRequest(BaseModel):
     usable_store_scope: str = "all"
     usable_store_ids: list[str] = []
     usable_store_names: list[str] = []
+    operation_store_id: str = ""
+    operation_store_name: str = ""
 
 
 class RedeemCouponRequest(BaseModel):
     code: str
     operator: str = "员工"
     remark: str = ""
+    redeem_store_id: str = ""
+    redeem_store_name: str = ""
 
 
 class VoidCouponRequest(BaseModel):
@@ -139,12 +143,14 @@ class UpdateStoreRequest(BaseModel):
 class UpdateAdminUserRequest(BaseModel):
     role: str | None = None
     enabled: bool | None = None
+    store_ids: list[str] | None = None
 
 
 class CreateAdminUserRequest(BaseModel):
     phone: str
     name: str
-    store_id: str
+    store_id: str = ""
+    store_ids: list[str] = []
     role: str
 
 
@@ -340,18 +346,29 @@ def current_admin_profile(conn, username: str) -> dict:
         ).fetchone()
     )
     if user:
+        stores = admin_store_rows(conn, user.get("id"), user.get("store_id"), user.get("store_name") or user.get("linked_store_name"))
+        store_names = [store.get("name") or "" for store in stores]
+        primary_store = stores[0] if stores else {"id": user.get("store_id"), "name": user.get("store_name") or user.get("linked_store_name")}
         return {
             "user_id": user.get("id") or user.get("username"),
             "name": user.get("display_name") or user.get("username"),
-            "store_id": user.get("store_id"),
-            "store_name": user.get("store_name") or user.get("linked_store_name"),
+            "store_id": primary_store.get("id"),
+            "store_name": join_text(store_names) or primary_store.get("name"),
+            "stores": stores,
+            "store_ids": [store.get("id") for store in stores],
+            "store_names": store_names,
             "role": user.get("role") or "staff",
         }
+    if username != SUPER_ADMIN_USERNAME.strip() or not SUPER_ADMIN_USERNAME.strip():
+        raise HTTPException(status_code=401, detail="login expired")
     return {
         "user_id": username,
         "name": username,
         "store_id": None,
-        "store_name": None,
+        "store_name": "",
+        "stores": [],
+        "store_ids": [],
+        "store_names": [],
         "role": "super_admin",
     }
 
@@ -387,6 +404,106 @@ def require_role(request: Request, allowed_roles: set[str]) -> str:
 
 def join_text(values: list[str]) -> str:
     return ",".join(str(value).strip() for value in values if str(value).strip())
+
+
+def split_text(value: str | None) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def admin_store_rows(conn, user_id: str | None, fallback_store_id: str | None = "", fallback_store_name: str | None = "") -> list[dict]:
+    rows: list[dict] = []
+    if user_id:
+        rows = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT store_id AS id, store_name AS name
+                FROM admin_user_stores
+                WHERE admin_user_id = ?
+                ORDER BY store_name
+                """,
+                (user_id,),
+            ).fetchall()
+        )
+    if not rows and (fallback_store_id or fallback_store_name):
+        rows = [{"id": fallback_store_id or "", "name": fallback_store_name or fallback_store_id or ""}]
+    return [row for row in rows if (row.get("id") or row.get("name"))]
+
+
+def store_options_by_ids(conn, store_ids: list[str]) -> list[dict]:
+    cleaned = []
+    for store_id in store_ids:
+        value = str(store_id or "").strip()
+        if value and value not in cleaned:
+            cleaned.append(value)
+    if not cleaned:
+        return []
+    placeholders = ",".join("?" for _ in cleaned)
+    rows = rows_to_dicts(
+        conn.execute(
+            f"SELECT id, name FROM stores WHERE id IN ({placeholders}) AND enabled = 1",
+            cleaned,
+        ).fetchall()
+    )
+    by_id = {row["id"]: row for row in rows}
+    return [by_id[store_id] for store_id in cleaned if store_id in by_id]
+
+
+def replace_admin_user_stores(conn, user_id: str, stores: list[dict]) -> None:
+    conn.execute("DELETE FROM admin_user_stores WHERE admin_user_id = ?", (user_id,))
+    for store in stores:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO admin_user_stores (id, admin_user_id, store_id, store_name, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (local_id("ADMIN_STORE"), user_id, store["id"], store["name"], now_text()),
+        )
+    primary = stores[0] if stores else {"id": None, "name": ""}
+    conn.execute(
+        "UPDATE admin_users SET store_id = ?, store_name = ? WHERE id = ?",
+        (primary.get("id"), primary.get("name") or "", user_id),
+    )
+
+
+def select_admin_store(admin_profile: dict, store_id: str = "", store_name: str = "") -> dict:
+    stores = admin_profile.get("stores") or []
+    cleaned_id = (store_id or "").strip()
+    cleaned_name = (store_name or "").strip()
+    if not stores:
+        return {"id": None, "name": ""}
+    if cleaned_id or cleaned_name:
+        for store in stores:
+            if (cleaned_id and str(store.get("id") or "") == cleaned_id) or (cleaned_name and str(store.get("name") or "") == cleaned_name):
+                return store
+        raise HTTPException(status_code=403, detail="selected store is not bound to current account")
+    if len(stores) == 1:
+        return stores[0]
+    raise HTTPException(status_code=400, detail="please choose operation store")
+
+
+def redeem_store_options(coupon: dict, admin_profile: dict) -> list[dict]:
+    stores = admin_profile.get("stores") or []
+    usable_store_names = split_text(coupon.get("usable_store_names"))
+    if not usable_store_names:
+        return stores
+    allowed = set(usable_store_names)
+    return [store for store in stores if (store.get("name") or "").strip() in allowed]
+
+
+def select_redeem_store(coupon: dict, admin_profile: dict, store_id: str = "", store_name: str = "") -> dict:
+    options = redeem_store_options(coupon, admin_profile)
+    if not options:
+        raise HTTPException(status_code=403, detail="current account stores cannot redeem this coupon")
+    cleaned_id = (store_id or "").strip()
+    cleaned_name = (store_name or "").strip()
+    if cleaned_id or cleaned_name:
+        for store in options:
+            if (cleaned_id and str(store.get("id") or "") == cleaned_id) or (cleaned_name and str(store.get("name") or "") == cleaned_name):
+                return store
+        raise HTTPException(status_code=403, detail="selected store cannot redeem this coupon")
+    if len(options) == 1:
+        return options[0]
+    raise HTTPException(status_code=400, detail="please choose redeem store")
 
 
 def store_id_for(name: str) -> str:
@@ -1228,7 +1345,14 @@ def admin_users(request: Request) -> dict:
             ORDER BY deleted_at IS NOT NULL, enabled DESC, store_name, display_name, phone
             """
         ).fetchall()
-        return {"items": rows_to_dicts(rows)}
+        items = rows_to_dicts(rows)
+        for item in items:
+            stores = admin_store_rows(conn, item.get("id"), item.get("store_id"), item.get("store_name"))
+            item["stores"] = stores
+            item["store_ids"] = [store.get("id") for store in stores]
+            item["store_names"] = [store.get("name") for store in stores]
+            item["store_name"] = join_text(item["store_names"]) or item.get("store_name")
+        return {"items": items}
 
 
 @app.post("/api/admin-users")
@@ -1247,7 +1371,8 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="只能新增发券人员或核销人员")
 
     with db_session() as conn:
-        store = row_to_dict(
+        stores = store_options_by_ids(conn, req.store_ids or ([req.store_id] if req.store_id else []))
+        store = stores[0] if stores else row_to_dict(
             conn.execute(
                 "SELECT id, name FROM stores WHERE id = ? AND enabled = 1",
                 (req.store_id.strip(),),
@@ -1281,6 +1406,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                         existing["id"],
                     ),
                 )
+                replace_admin_user_stores(conn, existing["id"], stores or [store])
                 return {
                     "user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (existing["id"],)).fetchone()),
                     "created": False,
@@ -1310,6 +1436,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                 now_text(),
             ),
         )
+        replace_admin_user_stores(conn, user_id, stores or [store])
         return {
             "user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone()),
             "created": True,
@@ -1340,6 +1467,11 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
             if user.get("username") == username and not req.enabled:
                 raise HTTPException(status_code=400, detail="不能停用当前登录账号")
             conn.execute("UPDATE admin_users SET enabled = ? WHERE id = ?", (1 if req.enabled else 0, user_id))
+        if req.store_ids is not None:
+            stores = store_options_by_ids(conn, req.store_ids)
+            if not stores:
+                raise HTTPException(status_code=400, detail="璇烽€夋嫨鏈夋晥闂ㄥ簵")
+            replace_admin_user_stores(conn, user_id, stores)
         return {"user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())}
 
 
@@ -1506,6 +1638,7 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
 
     with db_session() as conn:
         admin_profile = current_admin_profile(conn, username)
+        operation_store = select_admin_store(admin_profile, req.operation_store_id, req.operation_store_name)
         customer = require_customer(conn, req.wid)
         template = require_template(conn, req.template_id)
         start = datetime.now(APP_TZ).replace(tzinfo=None)
@@ -1519,8 +1652,8 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
         issued = []
         usable_store_scope = req.usable_store_scope.strip() or "all"
         if usable_store_scope == "current":
-            usable_store_ids = [admin_profile.get("store_id") or ""]
-            usable_store_names = [admin_profile.get("store_name") or ""]
+            usable_store_ids = [operation_store.get("id") or ""]
+            usable_store_names = [operation_store.get("name") or ""]
         elif usable_store_scope == "customer_store":
             usable_store_ids = []
             usable_store_names = [customer.get("store_name") or ""]
@@ -1555,8 +1688,8 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
                 "usable_store_scope": usable_store_scope,
                 "usable_store_ids": join_text(usable_store_ids),
                 "usable_store_names": join_text(usable_store_names),
-                "issued_store_id": admin_profile.get("store_id"),
-                "issued_store_name": admin_profile.get("store_name"),
+                "issued_store_id": operation_store.get("id"),
+                "issued_store_name": operation_store.get("name"),
                 "issued_by_user_id": admin_profile.get("user_id"),
                 "issued_by_name": admin_profile.get("name"),
                 "issued_at": issued_at,
@@ -1618,6 +1751,7 @@ def redeem_coupon(req: RedeemCouponRequest, request: Request) -> dict:
         if coupon["status"] != "unused":
             raise HTTPException(status_code=400, detail=f"该券当前状态不可核销: {coupon['status_text']}")
 
+        redeem_store = select_redeem_store(coupon, admin_profile, req.redeem_store_id, req.redeem_store_name)
         used_time = now_text()
         cursor = conn.execute(
             """
@@ -1634,8 +1768,8 @@ def redeem_coupon(req: RedeemCouponRequest, request: Request) -> dict:
             """,
             (
                 used_time,
-                admin_profile.get("store_id"),
-                admin_profile.get("store_name"),
+                redeem_store.get("id"),
+                redeem_store.get("name"),
                 admin_profile.get("user_id"),
                 admin_profile.get("name"),
                 used_time,
@@ -1655,8 +1789,8 @@ def redeem_coupon(req: RedeemCouponRequest, request: Request) -> dict:
             "status": "used",
             "status_text": "已核销",
             "used_time": used_time,
-            "redeemed_store_id": admin_profile.get("store_id"),
-            "redeemed_store_name": admin_profile.get("store_name"),
+            "redeemed_store_id": redeem_store.get("id"),
+            "redeemed_store_name": redeem_store.get("name"),
             "redeemed_by_user_id": admin_profile.get("user_id"),
             "redeemed_by_name": admin_profile.get("name"),
             "redeemed_at": used_time,
@@ -1666,7 +1800,7 @@ def redeem_coupon(req: RedeemCouponRequest, request: Request) -> dict:
 
 @app.get("/api/coupons/{code}/preview")
 def coupon_preview(code: str, request: Request) -> dict:
-    require_login(request)
+    username = require_login(request)
     coupon_code = code.strip()
     if not coupon_code:
         raise HTTPException(status_code=400, detail="请输入券码")
@@ -1689,10 +1823,16 @@ def coupon_preview(code: str, request: Request) -> dict:
         if not coupon:
             raise HTTPException(status_code=404, detail="券码不存在")
         coupon = apply_dynamic_coupon_status(coupon)
+        admin_profile = current_admin_profile(conn, username)
+        options = redeem_store_options(coupon, admin_profile)
+        redeemable = coupon.get("status") == "unused" and bool(options)
+        message = "" if redeemable else "current account stores cannot redeem this coupon"
         return {
             "coupon": coupon,
-            "redeemable": coupon.get("status") == "unused",
-            "message": "" if coupon.get("status") == "unused" else f"该券当前不可核销: {coupon.get('status_text')}",
+            "redeemable": redeemable,
+            "redeem_store_options": options,
+            "redeem_message": message,
+            "message": message if coupon.get("status") == "unused" else f"该券当前不可核销: {coupon.get('status_text')}",
         }
 
 
