@@ -264,6 +264,26 @@ function isValidVin(value) {
   return /^[A-HJ-NPR-Z0-9]{17}$/.test(value);
 }
 
+function issueVinValidationMessage() {
+  const vin = normalizeVin($('issueVin')?.value || '');
+  if (!vin) return '请先输入 17 位车架号';
+  if (!isValidVin(vin)) return '车架号格式不正确：应为 17 位 VIN，且不能包含 I、O、Q';
+  return '';
+}
+
+function updateIssueVinValidation() {
+  const input = $('issueVin');
+  const hint = $('issueVinHint');
+  if (!input || !hint) return true;
+  const message = issueVinValidationMessage();
+  const hasValue = Boolean(normalizeVin(input.value));
+  const invalid = hasValue && Boolean(message);
+  input.classList.toggle('input-error', invalid);
+  hint.classList.toggle('error', invalid);
+  hint.textContent = invalid ? message : '车架号应为 17 位 VIN，不能包含 I、O、Q';
+  return !message;
+}
+
 function statusTag(status, text) {
   return `<span class="tag ${status}">${safe(text || status)}</span>`;
 }
@@ -656,11 +676,12 @@ function fillIssueCustomer(customer) {
   $('issueWid').value = safe(customer.wid) === '-' ? '' : customer.wid;
   $('issuePhone').value = safe(customer.phone) === '-' ? '' : customer.phone;
   if ($('issueVin')) $('issueVin').value = safe(customer.vin) === '-' ? '' : customer.vin;
-  $('issueNickname').value = safe(customer.nickname) === '-' ? '' : customer.nickname;
+  $('issueNickname').value = safe(customer.real_name || customer.nickname) === '-' ? '' : (customer.real_name || customer.nickname || '');
   $('issueStore').value = safe(customer.store_name) === '-' ? '' : customer.store_name;
   $('issueLevel').value = safe(customer.level_name || customer.member_card) === '-' ? '' : (customer.level_name || customer.member_card || '');
   $('issueCustomerResults').classList.add('hidden');
   $('issueCustomerResults').innerHTML = '';
+  updateIssueVinValidation();
   updateIssueStoreScopeLabels();
 }
 
@@ -672,6 +693,7 @@ function clearIssueCustomerFields() {
   $('issueNickname').value = '';
   $('issueStore').value = '';
   $('issueLevel').value = '';
+  updateIssueVinValidation();
   updateIssueStoreScopeLabels();
 }
 
@@ -679,6 +701,7 @@ async function lookupIssueCustomer() {
   const q = normalizeVin($('issueVin').value);
   const box = $('issueCustomerResults');
   clearIssueCustomerFields();
+  updateIssueVinValidation();
   if (!q) {
     box.classList.add('hidden');
     box.innerHTML = '';
@@ -714,6 +737,7 @@ function selectIssueLookupCustomer(index) {
 function scheduleIssueCustomerLookup() {
   clearTimeout(customerLookupTimer);
   clearIssueCustomerFields();
+  updateIssueVinValidation();
   const box = $('issueCustomerResults');
   const q = normalizeVin($('issueVin').value);
   if (!q) {
@@ -855,7 +879,8 @@ async function loadTemplates() {
   const data = await api(can('can_manage_templates') ? '/api/templates?include_disabled=true' : '/api/templates');
   const allRows = data.items || [];
   issueTemplateRows = allRows.filter((row) => Number(row.enabled) === 1);
-  $('issueTemplate').innerHTML = issueTemplateRows.map((row) => `<option value="${row.id}">${safe(row.name)}</option>`).join('');
+  $('issueTemplate').innerHTML = '<option value=""></option>' + issueTemplateRows.map((row) => `<option value="${row.id}">${safe(row.name)}</option>`).join('');
+  $('issueTemplate').value = '';
   renderIssueTemplateOptions();
   syncIssueTemplateDisplay();
   $('templateRows').innerHTML = allRows.map((row) => `
@@ -912,6 +937,7 @@ function selectIssueTemplate(templateId) {
 
 function selectedIssueTemplate() {
   const selectedId = $('issueTemplate') ? $('issueTemplate').value : '';
+  if (!selectedId) return null;
   return issueTemplateRows.find((row) => String(row.id) === String(selectedId)) || null;
 }
 
@@ -1295,8 +1321,13 @@ async function issueCoupon() {
   msg.className = 'message';
   msg.textContent = '';
   try {
+    const vinMessage = issueVinValidationMessage();
+    updateIssueVinValidation();
+    if (vinMessage) {
+      throw new Error(vinMessage);
+    }
     if (!$('issueWid').value) {
-      throw new Error('请先输入手机号并选择客户');
+      throw new Error('请先输入车架号并选择客户');
     }
     const template = selectedIssueTemplate();
     if (!template) {
@@ -1348,7 +1379,6 @@ function confirmIssueCouponDetail() {
   const customer = [
     $('issueNickname').value || '-',
     $('issuePhone').value || '-',
-    $('issueWid').value || '-',
   ].join(' / ');
   const lines = [
     '请确认是否给该客户发券：',

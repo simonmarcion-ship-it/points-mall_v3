@@ -207,10 +207,13 @@
           <div class="panel-head"><div class="panel-title">给客户发券</div></div>
           <div class="panel-body">
             <div class="form-grid">
-              <label>客户查询（车架号）<input id="issueVin" placeholder="输入车架号查询客户" autocomplete="off" /></label>
-              <label>客户 wid<input id="issueWid" placeholder="自动填充" readonly /></label>
+              <label>客户查询（车架号）
+                <input id="issueVin" placeholder="输入 17 位车架号查询客户" autocomplete="off" />
+                <span id="issueVinHint" class="field-hint">车架号应为 17 位 VIN，不能包含 I、O、Q</span>
+              </label>
+              <input id="issueWid" type="hidden" />
               <label>手机号<input id="issuePhone" placeholder="选择客户后自动填充" readonly /></label>
-              <label>昵称<input id="issueNickname" placeholder="自动填充" readonly /></label>
+              <label>姓名<input id="issueNickname" placeholder="选择客户后自动填充" readonly /></label>
               <label>客户归属门店<input id="issueStore" placeholder="自动填充" readonly /></label>
               <label>等级<input id="issueLevel" placeholder="自动填充" readonly /></label>
               <label class="wide">券模板

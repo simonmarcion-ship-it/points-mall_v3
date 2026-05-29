@@ -16,6 +16,10 @@ select[multiple] { min-height: 88px; }
 select:disabled { background: #f8fafc; color: #98a2b3; }
 input[readonly] { background: #f8fafc; color: #475467; }
 input:focus, select:focus, textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, .12); }
+input.input-error { border-color: #d92d20; background: #fff7f6; }
+input.input-error:focus { border-color: #d92d20; box-shadow: 0 0 0 2px rgba(217, 45, 32, .12); }
+.field-hint { color: #667085; font-size: 12px; line-height: 1.4; }
+.field-hint.error { color: #b42318; }
 button { border: 0; border-radius: 6px; padding: 8px 12px; background: #2563eb; color: #fff; cursor: pointer; white-space: nowrap; }
 button.secondary { background: #e8edf5; color: #1f2937; }
 button.danger { background: #c2410c; }
