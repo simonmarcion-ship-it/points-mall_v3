@@ -213,6 +213,44 @@ def get_customer_by_phone(conn, phone: str) -> dict | None:
     )
 
 
+def normalize_customer_vin(value: str | None) -> str:
+    return "".join(str(value or "").split()).upper()
+
+
+def get_customer_by_vin(conn, vin: str, exclude_wid: str = "") -> dict | None:
+    normalized = normalize_customer_vin(vin)
+    if not normalized:
+        return None
+    return row_to_dict(
+        conn.execute(
+            """
+            SELECT wid, phone, nickname, real_name, vin
+            FROM customers
+            WHERE UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+              AND wid != ?
+            ORDER BY became_customer_at DESC, wid DESC
+            LIMIT 1
+            """,
+            (normalized, exclude_wid),
+        ).fetchone()
+    )
+
+
+def ensure_vin_not_bound_to_other_phone(conn, vin: str, phone: str, current_wid: str = "") -> None:
+    normalized = normalize_customer_vin(vin)
+    if not normalized:
+        return
+    existing = get_customer_by_vin(conn, normalized, current_wid)
+    if not existing:
+        return
+    existing_phone = str(existing.get("phone") or "").strip()
+    if existing_phone and existing_phone != phone:
+        raise HTTPException(
+            status_code=409,
+            detail=f"您的车架号为“{normalized}”的车辆已经与手机“{existing_phone}”绑定，请使用该号码登录。如需换绑手机，请联系工作人员",
+        )
+
+
 STORE_MATCH_REMOVALS = (
     "汽车销售服务有限公司",
     "汽车销售有限公司",
@@ -720,6 +758,21 @@ def bind_phone_with_cargeer(
         customer = get_customer_by_phone(conn, phone)
         created = False
         should_enrich = bool(customer and customer_needs_cargeer_enrichment(customer))
+        cargeer_lookup = None
+        cargeer_status = ""
+
+        if customer and customer.get("vin"):
+            ensure_vin_not_bound_to_other_phone(conn, customer.get("vin"), phone, customer["wid"])
+
+        if not customer or should_enrich:
+            cargeer_lookup, cargeer_status = lookup_cargeer_by_phone(phone)
+            if cargeer_lookup and cargeer_lookup.vin:
+                ensure_vin_not_bound_to_other_phone(
+                    conn,
+                    cargeer_lookup.vin,
+                    phone,
+                    customer["wid"] if customer else "",
+                )
 
         if not customer:
             wid = local_id("LOCAL_CUSTOMER")
@@ -756,6 +809,10 @@ def bind_phone_with_cargeer(
 
         if not customer:
             raise HTTPException(status_code=500, detail="绑定客户失败")
+
+        if cargeer_lookup and customer_needs_cargeer_enrichment(customer):
+            customer = update_customer_from_cargeer(conn, customer, cargeer_lookup.as_customer_fields(), cargeer_status)
+            should_enrich = False
 
         if should_enrich:
             background_tasks.add_task(enrich_customer_from_cargeer_task, customer["wid"], phone)
