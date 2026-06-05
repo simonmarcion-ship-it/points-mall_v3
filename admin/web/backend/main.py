@@ -365,7 +365,7 @@ def current_admin_profile(conn, username: str) -> dict:
             "store_ids": [store.get("id") for store in stores],
             "store_names": store_names,
             "role": user.get("role") or "staff",
-            "can_issue_renewal": (user.get("role") in {"super_admin", "admin"}) or bool(user.get("can_issue_renewal")),
+            "can_issue_renewal": user.get("role") == "super_admin" or bool(user.get("can_issue_renewal")),
         }
     if username != SUPER_ADMIN_USERNAME.strip() or not SUPER_ADMIN_USERNAME.strip():
         raise HTTPException(status_code=401, detail="login expired")
@@ -422,7 +422,7 @@ def attach_profile_extras(conn, profile: dict) -> dict:
 
 def can_issue_renewal_coupon(admin_profile: dict) -> bool:
     role = admin_profile.get("role") or ""
-    return role in {"super_admin", "admin"} or bool(admin_profile.get("can_issue_renewal"))
+    return role == "super_admin" or bool(admin_profile.get("can_issue_renewal"))
 
 
 def admin_role(conn, username: str) -> str:
@@ -1458,7 +1458,7 @@ def admin_users(request: Request) -> dict:
             item["store_ids"] = [store.get("id") for store in stores]
             item["store_names"] = [store.get("name") for store in stores]
             item["store_name"] = join_text(item["store_names"]) or item.get("store_name")
-            item["can_issue_renewal"] = item.get("role") in {"super_admin", "admin"} or bool(item.get("can_issue_renewal"))
+            item["can_issue_renewal"] = item.get("role") == "super_admin" or bool(item.get("can_issue_renewal"))
         return {"items": items}
 
 
@@ -1595,7 +1595,7 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
             if role not in allowed_roles:
                 raise HTTPException(status_code=400, detail="当前账号不能分配该权限")
             conn.execute("UPDATE admin_users SET role = ? WHERE id = ?", (role, user_id))
-            if role != "issuer":
+            if role not in {"issuer", "admin"}:
                 conn.execute("UPDATE admin_users SET can_issue_renewal = 0 WHERE id = ?", (user_id,))
         if req.enabled is not None:
             if user.get("username") == username and not req.enabled:
@@ -1603,9 +1603,11 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
             conn.execute("UPDATE admin_users SET enabled = ? WHERE id = ?", (1 if req.enabled else 0, user_id))
         if req.can_issue_renewal is not None:
             effective_role = (req.role or user.get("role") or "").strip()
+            if effective_role == "admin" and operator_role != "super_admin":
+                raise HTTPException(status_code=403, detail="只有超级管理员可以调整管理员的续保券权限")
             conn.execute(
                 "UPDATE admin_users SET can_issue_renewal = ? WHERE id = ?",
-                (1 if effective_role == "issuer" and req.can_issue_renewal else 0, user_id),
+                (1 if effective_role in {"issuer", "admin"} and req.can_issue_renewal else 0, user_id),
             )
         return {"user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())}
 

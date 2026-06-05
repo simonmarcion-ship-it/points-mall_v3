@@ -1108,11 +1108,12 @@ async function loadAdminUsers() {
           <option value="redeemer" ${row.role === 'redeemer' ? 'selected' : ''}>核销人员</option>
           ${canPromoteAdmin ? `<option value="admin" ${row.role === 'admin' ? 'selected' : ''}>管理员</option>` : ''}
         </select>`;
+    const canEditRenewal = !deleted && (row.role === 'issuer' || row.role === 'staff' || (row.role === 'admin' && canPromoteAdmin));
     const renewalHtml = row.role === 'redeemer'
       ? '<span class="tag">不适用</span>'
-      : row.role === 'admin' || row.role === 'super_admin'
+      : row.role === 'super_admin'
       ? '<span class="tag used">是</span>'
-      : protectedRole || deleted
+      : !canEditRenewal
       ? (row.can_issue_renewal ? '<span class="tag used">是</span>' : '<span class="tag">否</span>')
       : `
         <select onchange="updateAdminUserRenewal('${safe(row.id)}', this.value === '1')">
