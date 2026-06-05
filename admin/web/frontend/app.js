@@ -1096,7 +1096,7 @@ async function loadAdminUsers() {
     const registerHtml = deleted
       ? '<span class="tag voided">已删除</span>'
       : (row.registered_at ? '<span class="tag used">已注册</span>' : '<span class="tag expired">待注册</span>');
-    const canPromoteAdmin = can('can_promote_admin');
+    const canPromoteAdmin = currentAdminProfile.role === 'super_admin' || can('can_promote_admin');
     const protectedRole = row.role === 'super_admin' || (!canPromoteAdmin && row.role === 'admin');
     const storeNames = row.store_name || (row.store_names?.length ? row.store_names.join('、') : '');
     const storeEditHtml = html(storeNames);
