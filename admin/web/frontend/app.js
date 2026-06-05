@@ -1406,9 +1406,6 @@ async function issueCoupon() {
     if (!template) {
       throw new Error('请先从下拉列表选择券模板');
     }
-    if (String(template.name || '').includes('续保') && !currentAdminProfile.can_issue_renewal) {
-      throw new Error('无发送“续保”券权限');
-    }
     if ($('issueUsableStoreScope').value === 'selected' && selectedIssueUsableStoreNames().length === 0) {
       throw new Error('选择指定门店时，请至少选择一个可用门店');
     }
