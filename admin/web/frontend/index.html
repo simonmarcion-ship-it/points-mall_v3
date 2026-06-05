@@ -172,6 +172,9 @@
             <p id="newAdminMessage" class="message"></p>
           </div>
           <div class="panel-body table-wrap">
+            <div class="form-grid compact-filter">
+              <label>筛选门店<select id="adminUserStoreFilter" onchange="loadAdminUsers()"><option value="">全部门店</option></select></label>
+            </div>
             <table>
               <thead><tr><th>姓名</th><th>手机号</th><th>所属门店</th><th>权限</th><th>续保券权限</th><th>状态</th><th>注册状态</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr></thead>
               <tbody id="adminUserRows"></tbody>
@@ -316,6 +319,6 @@
     <button type="button" class="danger" data-permission="can_void" onclick="confirmContextCouponVoid()">作废</button>
   </div>
   <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-  <script src="assets/app.js?v=20260605-renewal-super-admin-toggle"></script>
+  <script src="assets/app.js?v=20260605-admin-store-filter"></script>
 </body>
 </html>

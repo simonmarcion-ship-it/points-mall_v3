@@ -1088,7 +1088,20 @@ async function loadStoreMaintenance() {
 async function loadAdminUsers() {
   if (!$('adminUserRows')) return;
   const data = await api('/api/admin-users');
-  $('adminUserRows').innerHTML = (data.items || []).map((row) => {
+  const nameCollator = new Intl.Collator('zh-Hans-u-co-pinyin', { numeric: true, sensitivity: 'base' });
+  const allItems = data.items || [];
+  const selectedStore = renderAdminUserStoreFilter(allItems, $('adminUserStoreFilter')?.value || '');
+  const items = allItems.filter((row) => {
+    if (!selectedStore) return true;
+    const storeIds = row.store_ids || [];
+    const storeNames = row.store_names || [];
+    return storeIds.includes(selectedStore) || storeNames.includes(selectedStore) || row.store_id === selectedStore || row.store_name === selectedStore;
+  }).sort((a, b) => {
+    const nameA = a.display_name || a.username || a.phone || '';
+    const nameB = b.display_name || b.username || b.phone || '';
+    return nameCollator.compare(nameA, nameB);
+  });
+  $('adminUserRows').innerHTML = items.map((row) => {
     const deleted = Boolean(row.deleted_at);
     const statusHtml = deleted
       ? '<span class="tag voided">已被删除</span>'
@@ -1141,6 +1154,28 @@ async function loadAdminUsers() {
     </tr>
   `;
   }).join('');
+}
+
+function renderAdminUserStoreFilter(items, selectedStore = '') {
+  const select = $('adminUserStoreFilter');
+  if (!select) return '';
+  const stores = new Map();
+  (items || []).forEach((row) => {
+    const ids = row.store_ids?.length ? row.store_ids : [row.store_id || ''];
+    const names = row.store_names?.length ? row.store_names : [row.store_name || ''];
+    names.forEach((name, index) => {
+      const cleanName = (name || '').trim();
+      const id = (ids[index] || cleanName).trim();
+      if (cleanName && id) stores.set(id, cleanName);
+    });
+  });
+  const options = [...stores.entries()]
+    .sort((a, b) => new Intl.Collator('zh-Hans-u-co-pinyin', { numeric: true, sensitivity: 'base' }).compare(a[1], b[1]))
+    .map(([id, name]) => `<option value="${html(id)}" ${id === selectedStore ? 'selected' : ''}>${html(name)}</option>`)
+    .join('');
+  select.innerHTML = `<option value="">全部门店</option>${options}`;
+  select.value = stores.has(selectedStore) ? selectedStore : '';
+  return select.value;
 }
 
 async function createAdminUser() {
