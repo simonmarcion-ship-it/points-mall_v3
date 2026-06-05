@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>积分商城后台</title>
-  <link rel="stylesheet" href="assets/styles.css?v=20260605-renewal-permission-live-check" />
+  <link rel="stylesheet" href="assets/styles.css?v=20260605-renewal-permission-na" />
 </head>
 <body>
   <section id="loginView" class="login-view hidden">
@@ -165,7 +165,7 @@
               <label>手机号<input id="newAdminPhone" inputmode="tel" placeholder="用于注册和登录" /></label>
               <label>姓名<input id="newAdminName" placeholder="客服姓名" /></label>
               <label>所属门店<select id="newAdminStore"></select></label>
-              <label>权限<select id="newAdminRole"><option value="issuer">发券人员</option><option value="redeemer">核销人员</option></select></label>
+              <label>权限<select id="newAdminRole" onchange="syncNewAdminRenewalControl()"><option value="issuer">发券人员</option><option value="redeemer">核销人员</option></select></label>
               <label>续保券权限<select id="newAdminRenewal"><option value="0">否</option><option value="1">是</option></select></label>
             </div>
             <div class="actions"><button type="button" onclick="createAdminUser()">新增客服人员</button></div>
@@ -316,6 +316,6 @@
     <button type="button" class="danger" data-permission="can_void" onclick="confirmContextCouponVoid()">作废</button>
   </div>
   <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-  <script src="assets/app.js?v=20260605-renewal-permission-live-check"></script>
+  <script src="assets/app.js?v=20260605-renewal-permission-na"></script>
 </body>
 </html>

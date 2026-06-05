@@ -1529,7 +1529,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                         store["id"],
                         store["name"],
                         role,
-                        1 if req.can_issue_renewal else 0,
+                        1 if role == "issuer" and req.can_issue_renewal else 0,
                         phone_auth.get("password_hash"),
                         phone_auth.get("registered_at"),
                         existing["id"],
@@ -1563,7 +1563,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                 store["id"],
                 store["name"],
                 role,
-                1 if req.can_issue_renewal else 0,
+                1 if role == "issuer" and req.can_issue_renewal else 0,
                 now_text(),
                 phone_auth.get("registered_at"),
             ),
@@ -1595,14 +1595,17 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
             if role not in allowed_roles:
                 raise HTTPException(status_code=400, detail="当前账号不能分配该权限")
             conn.execute("UPDATE admin_users SET role = ? WHERE id = ?", (role, user_id))
+            if role != "issuer":
+                conn.execute("UPDATE admin_users SET can_issue_renewal = 0 WHERE id = ?", (user_id,))
         if req.enabled is not None:
             if user.get("username") == username and not req.enabled:
                 raise HTTPException(status_code=400, detail="不能停用当前登录账号")
             conn.execute("UPDATE admin_users SET enabled = ? WHERE id = ?", (1 if req.enabled else 0, user_id))
         if req.can_issue_renewal is not None:
+            effective_role = (req.role or user.get("role") or "").strip()
             conn.execute(
                 "UPDATE admin_users SET can_issue_renewal = ? WHERE id = ?",
-                (1 if req.can_issue_renewal else 0, user_id),
+                (1 if effective_role == "issuer" and req.can_issue_renewal else 0, user_id),
             )
         return {"user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())}
 

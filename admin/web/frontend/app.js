@@ -1108,7 +1108,11 @@ async function loadAdminUsers() {
           <option value="redeemer" ${row.role === 'redeemer' ? 'selected' : ''}>核销人员</option>
           ${canPromoteAdmin ? `<option value="admin" ${row.role === 'admin' ? 'selected' : ''}>管理员</option>` : ''}
         </select>`;
-    const renewalHtml = protectedRole || deleted
+    const renewalHtml = row.role === 'redeemer'
+      ? '<span class="tag">不适用</span>'
+      : row.role === 'admin' || row.role === 'super_admin'
+      ? '<span class="tag used">是</span>'
+      : protectedRole || deleted
       ? (row.can_issue_renewal ? '<span class="tag used">是</span>' : '<span class="tag">否</span>')
       : `
         <select onchange="updateAdminUserRenewal('${safe(row.id)}', this.value === '1')">
@@ -1150,7 +1154,7 @@ async function createAdminUser() {
         name: $('newAdminName').value,
         store_id: $('newAdminStore').value,
         role: $('newAdminRole').value,
-        can_issue_renewal: $('newAdminRenewal').value === '1',
+        can_issue_renewal: $('newAdminRole').value === 'issuer' && $('newAdminRenewal').value === '1',
       }),
     });
     msg.className = 'message ok';
@@ -1163,6 +1167,15 @@ async function createAdminUser() {
     msg.className = 'message error';
     msg.textContent = err.message;
   }
+}
+
+function syncNewAdminRenewalControl() {
+  const role = $('newAdminRole')?.value || '';
+  const renewal = $('newAdminRenewal');
+  if (!renewal) return;
+  const disabled = role !== 'issuer';
+  if (disabled) renewal.value = '0';
+  renewal.disabled = disabled;
 }
 
 async function updateAdminUserRole(userId, role) {
