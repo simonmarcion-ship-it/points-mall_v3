@@ -166,13 +166,14 @@
               <label>姓名<input id="newAdminName" placeholder="客服姓名" /></label>
               <label>所属门店<select id="newAdminStore"></select></label>
               <label>权限<select id="newAdminRole"><option value="issuer">发券人员</option><option value="redeemer">核销人员</option></select></label>
+              <label>续保券权限<select id="newAdminRenewal"><option value="0">否</option><option value="1">是</option></select></label>
             </div>
             <div class="actions"><button type="button" onclick="createAdminUser()">新增客服人员</button></div>
             <p id="newAdminMessage" class="message"></p>
           </div>
           <div class="panel-body table-wrap">
             <table>
-              <thead><tr><th>姓名</th><th>手机号</th><th>所属门店</th><th>权限</th><th>状态</th><th>注册状态</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr></thead>
+              <thead><tr><th>姓名</th><th>手机号</th><th>所属门店</th><th>权限</th><th>续保券</th><th>状态</th><th>注册状态</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr></thead>
               <tbody id="adminUserRows"></tbody>
             </table>
           </div>

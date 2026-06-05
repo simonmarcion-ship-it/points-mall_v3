@@ -1108,6 +1108,13 @@ async function loadAdminUsers() {
           <option value="redeemer" ${row.role === 'redeemer' ? 'selected' : ''}>核销人员</option>
           ${canPromoteAdmin ? `<option value="admin" ${row.role === 'admin' ? 'selected' : ''}>管理员</option>` : ''}
         </select>`;
+    const renewalHtml = protectedRole || deleted
+      ? (row.can_issue_renewal ? '<span class="tag used">是</span>' : '<span class="tag">否</span>')
+      : `
+        <select onchange="updateAdminUserRenewal('${safe(row.id)}', this.value === '1')">
+          <option value="0" ${row.can_issue_renewal ? '' : 'selected'}>否</option>
+          <option value="1" ${row.can_issue_renewal ? 'selected' : ''}>是</option>
+        </select>`;
     const actionHtml = protectedRole
       ? '<span class="subtle">受保护账号</span>'
       : deleted
@@ -1120,6 +1127,7 @@ async function loadAdminUsers() {
       <td data-label="手机号">${html(row.phone || row.username)}</td>
       <td data-label="所属门店">${storeEditHtml}</td>
       <td data-label="权限">${roleHtml}</td>
+      <td data-label="续保券">${renewalHtml}</td>
       <td data-label="状态">${statusHtml}</td>
       <td data-label="注册状态">${registerHtml}</td>
       <td data-label="注册时间">${html(row.created_at)}</td>
@@ -1142,12 +1150,14 @@ async function createAdminUser() {
         name: $('newAdminName').value,
         store_id: $('newAdminStore').value,
         role: $('newAdminRole').value,
+        can_issue_renewal: $('newAdminRenewal').value === '1',
       }),
     });
     msg.className = 'message ok';
     msg.textContent = '客服人员已添加，对方可用手机号获取验证码完成注册';
     $('newAdminPhone').value = '';
     $('newAdminName').value = '';
+    $('newAdminRenewal').value = '0';
     await loadAdminUsers();
   } catch (err) {
     msg.className = 'message error';
@@ -1159,6 +1169,14 @@ async function updateAdminUserRole(userId, role) {
   await api('/api/admin-users/' + encodeURIComponent(userId), {
     method: 'PATCH',
     body: JSON.stringify({ role }),
+  });
+  await loadAdminUsers();
+}
+
+async function updateAdminUserRenewal(userId, canIssueRenewal) {
+  await api('/api/admin-users/' + encodeURIComponent(userId), {
+    method: 'PATCH',
+    body: JSON.stringify({ can_issue_renewal: canIssueRenewal }),
   });
   await loadAdminUsers();
 }
@@ -1388,6 +1406,9 @@ async function issueCoupon() {
     if (!template) {
       throw new Error('请先从下拉列表选择券模板');
     }
+    if (String(template.name || '').includes('续保') && !currentAdminProfile.can_issue_renewal) {
+      throw new Error('无发送“续保”券权限');
+    }
     if ($('issueUsableStoreScope').value === 'selected' && selectedIssueUsableStoreNames().length === 0) {
       throw new Error('选择指定门店时，请至少选择一个可用门店');
     }
@@ -1421,6 +1442,7 @@ async function issueCoupon() {
   } catch (err) {
     msg.className = 'message error';
     msg.textContent = err.message;
+    alert(err.message);
   }
 }
 

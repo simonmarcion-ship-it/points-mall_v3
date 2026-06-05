@@ -147,6 +147,7 @@ class UpdateStoreRequest(BaseModel):
 class UpdateAdminUserRequest(BaseModel):
     role: str | None = None
     enabled: bool | None = None
+    can_issue_renewal: bool | None = None
 
 
 class CreateAdminUserRequest(BaseModel):
@@ -154,6 +155,7 @@ class CreateAdminUserRequest(BaseModel):
     name: str
     store_id: str = ""
     role: str
+    can_issue_renewal: bool = False
 
 
 class ClientLookupRequest(BaseModel):
@@ -339,6 +341,7 @@ def current_admin_profile(conn, username: str) -> dict:
         conn.execute(
             """
             SELECT u.id, u.username, u.display_name, u.phone, u.store_id, u.store_name, u.role,
+                   COALESCE(u.can_issue_renewal, 0) AS can_issue_renewal,
                    s.name AS linked_store_name
             FROM admin_users u
             LEFT JOIN stores s ON s.id = u.store_id
@@ -362,6 +365,7 @@ def current_admin_profile(conn, username: str) -> dict:
             "store_ids": [store.get("id") for store in stores],
             "store_names": store_names,
             "role": user.get("role") or "staff",
+            "can_issue_renewal": (user.get("role") in {"super_admin", "admin"}) or bool(user.get("can_issue_renewal")),
         }
     if username != SUPER_ADMIN_USERNAME.strip() or not SUPER_ADMIN_USERNAME.strip():
         raise HTTPException(status_code=401, detail="login expired")
@@ -376,6 +380,7 @@ def current_admin_profile(conn, username: str) -> dict:
         "store_ids": [],
         "store_names": [],
         "role": "super_admin",
+        "can_issue_renewal": True,
     }
 
 
@@ -413,6 +418,11 @@ def attach_profile_extras(conn, profile: dict) -> dict:
     profile["permissions"] = role_permissions(profile.get("role") or "issuer")
     profile["identities"] = admin_identity_options(conn, profile)
     return profile
+
+
+def can_issue_renewal_coupon(admin_profile: dict) -> bool:
+    role = admin_profile.get("role") or ""
+    return role in {"super_admin", "admin"} or bool(admin_profile.get("can_issue_renewal"))
 
 
 def admin_role(conn, username: str) -> str:
@@ -1432,7 +1442,9 @@ def admin_users(request: Request) -> dict:
     with db_session() as conn:
         rows = conn.execute(
             """
-            SELECT id, username, display_name, phone, store_id, store_name, role, enabled,
+            SELECT id, username, display_name, phone, store_id, store_name, role,
+                   COALESCE(can_issue_renewal, 0) AS can_issue_renewal,
+                   enabled,
                    created_at, registered_at, last_login_at, deleted_at
             FROM admin_users
             WHERE deleted_at IS NULL
@@ -1446,6 +1458,7 @@ def admin_users(request: Request) -> dict:
             item["store_ids"] = [store.get("id") for store in stores]
             item["store_names"] = [store.get("name") for store in stores]
             item["store_name"] = join_text(item["store_names"]) or item.get("store_name")
+            item["can_issue_renewal"] = item.get("role") in {"super_admin", "admin"} or bool(item.get("can_issue_renewal"))
         return {"items": items}
 
 
@@ -1503,7 +1516,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                     """
                     UPDATE admin_users
                     SET username = ?, display_name = ?, phone = ?,
-                        store_id = ?, store_name = ?, role = ?, enabled = 1,
+                        store_id = ?, store_name = ?, role = ?, can_issue_renewal = ?, enabled = 1,
                         password_hash = COALESCE(?, password_hash),
                         registered_at = COALESCE(?, registered_at),
                         deleted_at = NULL
@@ -1516,6 +1529,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                         store["id"],
                         store["name"],
                         role,
+                        1 if req.can_issue_renewal else 0,
                         phone_auth.get("password_hash"),
                         phone_auth.get("registered_at"),
                         existing["id"],
@@ -1537,8 +1551,8 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
             """
             INSERT INTO admin_users (
                 id, username, password_hash, display_name, phone, store_id, store_name,
-                role, enabled, created_at, registered_at, last_login_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)
+                role, can_issue_renewal, enabled, created_at, registered_at, last_login_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)
             """,
             (
                 user_id,
@@ -1549,6 +1563,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
                 store["id"],
                 store["name"],
                 role,
+                1 if req.can_issue_renewal else 0,
                 now_text(),
                 phone_auth.get("registered_at"),
             ),
@@ -1584,6 +1599,11 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
             if user.get("username") == username and not req.enabled:
                 raise HTTPException(status_code=400, detail="不能停用当前登录账号")
             conn.execute("UPDATE admin_users SET enabled = ? WHERE id = ?", (1 if req.enabled else 0, user_id))
+        if req.can_issue_renewal is not None:
+            conn.execute(
+                "UPDATE admin_users SET can_issue_renewal = ? WHERE id = ?",
+                (1 if req.can_issue_renewal else 0, user_id),
+            )
         return {"user": row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())}
 
 
@@ -1753,6 +1773,8 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
         operation_store = select_admin_store(admin_profile, req.operation_store_id, req.operation_store_name)
         customer = require_customer(conn, req.wid)
         template = require_template(conn, req.template_id)
+        if "续保" in str(template.get("name") or "") and not can_issue_renewal_coupon(admin_profile):
+            raise HTTPException(status_code=403, detail="无发送“续保”券权限")
         start = datetime.now(APP_TZ).replace(tzinfo=None)
         issued_at = now_text()
         if validity_type == "unlimited":

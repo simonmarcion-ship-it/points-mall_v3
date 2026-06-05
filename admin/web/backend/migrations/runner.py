@@ -21,6 +21,7 @@ MIGRATIONS = [
     Migration("007", "backend.migrations.v007_admin_user_soft_delete"),
     Migration("008", "backend.migrations.v008_remove_legacy_wangting_admin"),
     Migration("009", "backend.migrations.v009_admin_user_stores"),
+    Migration("010", "backend.migrations.v010_admin_renewal_coupon_permission"),
 ]
 
 
