@@ -74,13 +74,14 @@
               <label>成为客户开始<input id="becameFrom" type="date" /></label>
               <label>成为客户结束<input id="becameTo" type="date" /></label>
               <label>归属门店<select id="storeFilter"></select></label>
+              <label data-permission="can_admin_users">客户状态<select id="customerDeletedStatus" onchange="searchCustomers()"><option value="active">正常客户</option><option value="deleted">已删除客户</option><option value="all">全部客户</option></select></label>
               <label>入会开始<input id="joinedFrom" type="date" /></label>
               <label>入会结束<input id="joinedTo" type="date" /></label>
               <label>每页数量<select id="pageSize"><option>20</option><option selected>50</option><option>100</option><option>200</option></select></label>
             </div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>wid</th><th>手机号</th><th>昵称</th><th>姓名</th><th>车架号</th><th>车牌号</th><th>车型</th><th>归属门店</th><th>成为客户时间</th><th>入会时间</th><th>等级</th><th>可用积分</th><th>可用券</th></tr></thead>
+                <thead><tr><th>wid</th><th>手机号</th><th>昵称</th><th>姓名</th><th>车架号</th><th>车牌号</th><th>车型</th><th>归属门店</th><th>成为客户时间</th><th>入会时间</th><th>等级</th><th>可用积分</th><th>可用券</th><th>删除时间</th><th>删除原因</th></tr></thead>
                 <tbody id="customerRows"></tbody>
               </table>
             </div>
@@ -319,6 +320,6 @@
     <button type="button" class="danger" data-permission="can_void" onclick="confirmContextCouponVoid()">作废</button>
   </div>
   <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-  <script src="assets/app.js?v=20260605-admin-store-filter"></script>
+  <script src="assets/app.js?v=20260607-customer-deleted-filter"></script>
 </body>
 </html>

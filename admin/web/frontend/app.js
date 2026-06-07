@@ -265,6 +265,7 @@ window.sendRegisterSmsCode = sendRegisterSmsCode;
 window.selectIssueTemplate = selectIssueTemplate;
 window.startEditCustomerDetail = startEditCustomerDetail;
 window.cancelEditCustomerDetail = cancelEditCustomerDetail;
+window.deleteCustomer = deleteCustomer;
 window.deleteAdminUser = deleteAdminUser;
 window.toggleTemplate = toggleTemplate;
 
@@ -367,6 +368,7 @@ function customerQueryParams() {
     became_to: $('becameTo').value,
     joined_from: $('joinedFrom').value,
     joined_to: $('joinedTo').value,
+    deleted_status: can('can_admin_users') ? ($('customerDeletedStatus')?.value || 'active') : 'active',
     limit: String(pageSize),
     offset: String((customerPage - 1) * pageSize),
   });
@@ -379,7 +381,7 @@ async function searchCustomers(resetPage = true) {
   const data = await api('/api/customers?' + params.toString());
   customerTotal = data.total;
   $('customerRows').innerHTML = data.items.map((row) => `
-    <tr class="clickable-row" onclick="selectCustomer('${row.wid}')">
+    <tr class="clickable-row ${row.deleted_at ? 'muted-row' : ''}" onclick="selectCustomer('${row.wid}')">
       <td data-label="wid">${safe(row.wid)}</td>
       <td data-label="手机号">${safe(row.phone)}</td>
       <td data-label="昵称">${safe(row.nickname)}</td>
@@ -393,6 +395,8 @@ async function searchCustomers(resetPage = true) {
       <td data-label="等级">${safe(row.level_name || row.member_card)}</td>
       <td data-label="可用积分">${safe(row.available_point)}</td>
       <td data-label="可用券">${safe(row.unused_coupon_count)} / ${safe(row.coupon_count)}</td>
+      <td data-label="删除时间">${safe(row.deleted_at)}</td>
+      <td data-label="删除原因">${safe(row.deleted_reason)}</td>
     </tr>
   `).join('');
   const totalPages = Math.max(1, Math.ceil(customerTotal / pageSize));
@@ -413,6 +417,7 @@ async function resetCustomerFilters() {
     $(id).value = '';
   });
   $('storeFilter').value = '';
+  if ($('customerDeletedStatus')) $('customerDeletedStatus').value = 'active';
   customerPage = 1;
   await searchCustomers();
 }
@@ -430,7 +435,9 @@ async function selectCustomer(wid) {
   if (openingFromList) scrollWindowTop();
   const data = await api('/api/customers/' + encodeURIComponent(wid));
   const c = data.customer;
-  fillIssueCustomer(c);
+  if (!c.deleted_at) {
+    fillIssueCustomer(c);
+  }
   selectedCustomerCoupons = data.coupons;
   renderCustomerDetail(c);
   $('couponDetail').textContent = '\u9009\u62e9\u4e00\u4e2a\u5238\u67e5\u770b\u8be6\u60c5';
@@ -438,7 +445,12 @@ async function selectCustomer(wid) {
 }
 
 function renderCustomerDetail(c) {
-  if (can('can_create_customer')) {
+  const deletedInfo = c.deleted_at
+    ? `<div class="key">删除时间</div><div>${safe(c.deleted_at)}</div>
+        <div class="key">删除人</div><div>${safe(c.deleted_by)}</div>
+        <div class="key">删除原因</div><div>${safe(c.deleted_reason)}</div>`
+    : '';
+  if (can('can_create_customer') && !c.deleted_at) {
     const storeOptions = Array.from($('newCustomerStore').options)
       .filter((option) => option.value)
       .map((option) => `<option value="${html(option.value)}" ${option.value === c.store_name ? 'selected' : ''}>${html(option.textContent)}</option>`)
@@ -446,6 +458,7 @@ function renderCustomerDetail(c) {
     $('customerDetail').innerHTML = `
       <div class="customer-detail-actions">
         <button type="button" class="secondary" id="editCustomerButton" onclick="startEditCustomerDetail()">编辑</button>
+        ${can('can_admin_users') ? '<button type="button" class="danger" id="deleteCustomerButton" onclick="deleteCustomer()">删除客户</button>' : ''}
       </div>
       <div id="customerReadonlyDetail" class="kv">
         <div class="key">客户编号</div><div>${safe(c.wid)}</div>
@@ -465,6 +478,7 @@ function renderCustomerDetail(c) {
         <div class="key">&#20837;&#20250;&#26102;&#38388;</div><div>${formatDateTime(c.joined_at)}</div>
         <div class="key">&#23458;&#25143;&#29366;&#24577;</div><div>${formatCustomerStatus(c.customer_status)}</div>
         <div class="key">&#40657;&#21517;&#21333;</div><div>${formatBool(c.black_user)}</div>
+        ${deletedInfo}
       </div>
       <div id="customerEditDetail" class="hidden">
         <div class="form-grid">
@@ -509,6 +523,7 @@ function renderCustomerDetail(c) {
     <div class="key">&#20837;&#20250;&#26102;&#38388;</div><div>${formatDateTime(c.joined_at)}</div>
     <div class="key">&#23458;&#25143;&#29366;&#24577;</div><div>${formatCustomerStatus(c.customer_status)}</div>
     <div class="key">&#40657;&#21517;&#21333;</div><div>${formatBool(c.black_user)}</div>
+    ${deletedInfo}
   </div>`;
 }
 
@@ -556,6 +571,27 @@ async function saveCustomerDetail() {
     msg.className = 'message error';
     msg.textContent = err.message;
   }
+}
+
+async function deleteCustomer() {
+  if (!selectedWid) return;
+  const reason = window.prompt('删除后该客户将不再出现在正常客户列表，也不能再用于发券或查重。该操作不可恢复，历史券和操作记录仍会保留。\n\n请输入删除原因：');
+  if (reason === null) return;
+  const cleanReason = reason.trim();
+  if (!cleanReason) {
+    window.alert('请输入删除原因');
+    return;
+  }
+  if (!window.confirm(`确定删除客户 ${selectedWid} 吗？\n\n该操作不可恢复。`)) return;
+  await api('/api/customers/' + encodeURIComponent(selectedWid), {
+    method: 'DELETE',
+    body: JSON.stringify({ reason: cleanReason }),
+  });
+  selectedWid = '';
+  selectedCustomerCoupons = [];
+  $('customerDetailPanel').classList.add('hidden');
+  $('customerListPanel').classList.remove('hidden');
+  await searchCustomers(false);
 }
 
 function renderCustomerCoupons() {
@@ -1849,7 +1885,8 @@ async function init() {
   $('search').addEventListener('keydown', (event) => {
     if (event.key === 'Enter') searchCustomers();
   });
-  ['storeFilter', 'becameFrom', 'becameTo', 'joinedFrom', 'joinedTo', 'pageSize'].forEach((id) => {
+  ['storeFilter', 'customerDeletedStatus', 'becameFrom', 'becameTo', 'joinedFrom', 'joinedTo', 'pageSize'].forEach((id) => {
+    if (!$(id)) return;
     $(id).addEventListener('change', () => searchCustomers());
   });
   $('issueVin').addEventListener('input', scheduleIssueCustomerLookup);

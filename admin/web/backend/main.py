@@ -122,6 +122,10 @@ class UpdateCustomerRequest(BaseModel):
     plate_no: str | None = None
 
 
+class DeleteCustomerRequest(BaseModel):
+    reason: str = ""
+
+
 class CreateTemplateRequest(BaseModel):
     name: str
     coupon_type: str = "通用券"
@@ -302,6 +306,7 @@ def validate_customer_vin(conn, vin: str, current_wid: str = "") -> str:
             FROM customers
             WHERE UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
               AND wid != ?
+              AND deleted_at IS NULL
             LIMIT 1
             """,
             (normalized, current_wid),
@@ -326,7 +331,7 @@ def validate_customer_phone_unique(conn, phone: str, current_wid: str = "") -> s
         raise HTTPException(status_code=400, detail="请输入正确的手机号")
     existing = row_to_dict(
         conn.execute(
-            "SELECT wid, nickname, real_name FROM customers WHERE phone = ? AND wid != ? LIMIT 1",
+            "SELECT wid, nickname, real_name FROM customers WHERE phone = ? AND wid != ? AND deleted_at IS NULL LIMIT 1",
             (normalized, current_wid),
         ).fetchone()
     )
@@ -583,7 +588,7 @@ def ensure_store(conn, name: str) -> None:
     if not store_name:
         return
     customer_count = conn.execute(
-        "SELECT COUNT(*) FROM customers WHERE TRIM(store_name) = ?",
+        "SELECT COUNT(*) FROM customers WHERE TRIM(store_name) = ? AND deleted_at IS NULL",
         (store_name,),
     ).fetchone()[0]
     existing = conn.execute("SELECT id FROM stores WHERE name = ?", (store_name,)).fetchone()
@@ -786,8 +791,9 @@ async def coupon_expiry_loop() -> None:
             print(f"已自动更新过期券: {expired_count} 张")
 
 
-def require_customer(conn, wid: str) -> dict:
-    row = conn.execute("SELECT * FROM customers WHERE wid = ?", (wid,)).fetchone()
+def require_customer(conn, wid: str, include_deleted: bool = False) -> dict:
+    deleted_filter = "" if include_deleted else " AND deleted_at IS NULL"
+    row = conn.execute(f"SELECT * FROM customers WHERE wid = ?{deleted_filter}", (wid,)).fetchone()
     customer = row_to_dict(row)
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
@@ -811,6 +817,11 @@ def active_unused_coupon_sql(alias: str = "") -> str:
     """
 
 
+def active_customer_sql(alias: str = "") -> str:
+    prefix = f"{alias}." if alias else ""
+    return f"{prefix}deleted_at IS NULL"
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "database": str(DB_PATH)}
@@ -829,7 +840,7 @@ def client_profile(phone: str) -> dict:
                 SELECT wid, phone, nickname, store_name, level_name, member_card,
                        available_point, total_point, customer_status
                 FROM customers
-                WHERE phone = ?
+                WHERE phone = ? AND deleted_at IS NULL
                 ORDER BY became_customer_at DESC, wid DESC
                 LIMIT 1
                 """,
@@ -867,7 +878,7 @@ def client_coupon_detail(code: str, phone: str) -> dict:
             SELECT cp.*, c.phone
             FROM coupons cp
             JOIN customers c ON c.wid = cp.customer_wid
-            WHERE cp.code = ? AND c.phone = ?
+            WHERE cp.code = ? AND c.phone = ? AND c.deleted_at IS NULL
             """,
             (code.strip(), phone),
         ).fetchone()
@@ -1067,7 +1078,7 @@ def summary(request: Request) -> dict:
             return int(conn.execute(sql).fetchone()[0])
 
         return {
-            "customers": scalar("SELECT COUNT(*) FROM customers"),
+            "customers": scalar("SELECT COUNT(*) FROM customers WHERE deleted_at IS NULL"),
             "coupons": scalar("SELECT COUNT(*) FROM coupons"),
             "unused_coupons": scalar(
                 f"SELECT COUNT(*) FROM coupons WHERE {active_unused_coupon_sql()}"
@@ -1104,50 +1115,60 @@ def search_customers(
     became_to: str = "",
     joined_from: str = "",
     joined_to: str = "",
+    deleted_status: str = "active",
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
-    require_login(request)
+    username = require_login(request)
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
     keyword = f"%{q.strip()}%"
-    where_parts = []
-    params: list = []
-    if q.strip():
-        where_parts.append(
-            """
-            (
-                c.wid LIKE ?
-                OR c.phone LIKE ?
-                OR c.nickname LIKE ?
-                OR c.member_card LIKE ?
-                OR c.store_name LIKE ?
-                OR c.plate_no LIKE ?
-                OR c.vin LIKE ?
-                OR c.real_name LIKE ?
-            )
-            """
-        )
-        params = [keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword]
-    if store.strip():
-        where_parts.append("c.store_name LIKE ?")
-        params.append(f"%{store.strip()}%")
-    if became_from.strip():
-        where_parts.append("c.became_customer_at >= ?")
-        params.append(became_from.strip())
-    if became_to.strip():
-        where_parts.append("c.became_customer_at <= ?")
-        params.append(f"{became_to.strip()} 23:59:59")
-    if joined_from.strip():
-        where_parts.append("c.joined_at >= ?")
-        params.append(joined_from.strip())
-    if joined_to.strip():
-        where_parts.append("c.joined_at <= ?")
-        params.append(f"{joined_to.strip()} 23:59:59")
-
-    where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
-
     with db_session() as conn:
+        role = admin_role(conn, username)
+        can_view_deleted = role in {"admin", "super_admin"}
+        if not can_view_deleted:
+            deleted_status = "active"
+        deleted_status = deleted_status if deleted_status in {"active", "deleted", "all"} else "active"
+        if deleted_status == "deleted":
+            where_parts = ["c.deleted_at IS NOT NULL"]
+        elif deleted_status == "all":
+            where_parts = []
+        else:
+            where_parts = [active_customer_sql("c")]
+        params: list = []
+        if q.strip():
+            where_parts.append(
+                """
+                (
+                    c.wid LIKE ?
+                    OR c.phone LIKE ?
+                    OR c.nickname LIKE ?
+                    OR c.member_card LIKE ?
+                    OR c.store_name LIKE ?
+                    OR c.plate_no LIKE ?
+                    OR c.vin LIKE ?
+                    OR c.real_name LIKE ?
+                )
+                """
+            )
+            params = [keyword, keyword, keyword, keyword, keyword, keyword, keyword, keyword]
+        if store.strip():
+            where_parts.append("c.store_name LIKE ?")
+            params.append(f"%{store.strip()}%")
+        if became_from.strip():
+            where_parts.append("c.became_customer_at >= ?")
+            params.append(became_from.strip())
+        if became_to.strip():
+            where_parts.append("c.became_customer_at <= ?")
+            params.append(f"{became_to.strip()} 23:59:59")
+        if joined_from.strip():
+            where_parts.append("c.joined_at >= ?")
+            params.append(joined_from.strip())
+        if joined_to.strip():
+            where_parts.append("c.joined_at <= ?")
+            params.append(f"{joined_to.strip()} 23:59:59")
+
+        where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         rows = conn.execute(
             f"""
             SELECT
@@ -1155,6 +1176,7 @@ def search_customers(
                 c.real_name, c.vin, c.plate_no, c.car_series,
                 c.became_customer_at, c.joined_at, c.available_point, c.total_point,
                 c.available_balance, c.black_user, c.customer_status,
+                c.deleted_at, c.deleted_by, c.deleted_reason,
                 COUNT(cp.code) AS coupon_count,
                 SUM(
                     CASE
@@ -1177,9 +1199,10 @@ def search_customers(
 
 @app.get("/api/customers/{wid}")
 def customer_detail(wid: str, request: Request) -> dict:
-    require_login(request)
+    username = require_login(request)
     with db_session() as conn:
-        customer = require_customer(conn, wid)
+        role = admin_role(conn, username)
+        customer = require_customer(conn, wid, include_deleted=role in {"admin", "super_admin"})
         coupons = apply_dynamic_coupon_statuses(rows_to_dicts(
             conn.execute(
                 """
@@ -1250,6 +1273,35 @@ def update_customer(wid: str, req: UpdateCustomerRequest, request: Request) -> d
         return {"customer": require_customer(conn, wid)}
 
 
+@app.delete("/api/customers/{wid}")
+def delete_customer(wid: str, req: DeleteCustomerRequest, request: Request) -> dict:
+    operator = require_role(request, {"admin", "super_admin"})
+    reason = req.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="请输入删除原因")
+
+    with db_session() as conn:
+        customer = require_customer(conn, wid)
+        deleted_at = now_text()
+        conn.execute(
+            """
+            UPDATE customers
+            SET deleted_at = ?, deleted_by = ?, deleted_reason = ?
+            WHERE wid = ? AND deleted_at IS NULL
+            """,
+            (deleted_at, operator, reason, wid),
+        )
+        conn.execute(
+            """
+            INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
+            VALUES (?, ?, '删除客户', ?, ?, 1, ?)
+            """,
+            (deleted_at, operator, wid, customer.get("phone"), reason),
+        )
+        ensure_store(conn, customer.get("store_name") or "")
+        return {"ok": True, "deleted_at": deleted_at}
+
+
 @app.post("/api/customers")
 def create_customer(req: CreateCustomerRequest, request: Request) -> dict:
     operator = require_role(request, {"admin", "super_admin", "issuer"})
@@ -1258,7 +1310,7 @@ def create_customer(req: CreateCustomerRequest, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="请输入手机号")
 
     with db_session() as conn:
-        existing = row_to_dict(conn.execute("SELECT * FROM customers WHERE phone = ?", (phone,)).fetchone())
+        existing = row_to_dict(conn.execute("SELECT * FROM customers WHERE phone = ? AND deleted_at IS NULL", (phone,)).fetchone())
         if existing:
             return {"customer": existing, "created": False}
 
@@ -1350,6 +1402,7 @@ def customer_lookup(request: Request, q: str, limit: int = 10, mode: str = "") -
                        available_point, total_point, customer_status
                 FROM customers
                 WHERE COALESCE(TRIM(vin), '') != ''
+                  AND deleted_at IS NULL
                   AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) LIKE ?
                 ORDER BY
                     CASE
@@ -1371,12 +1424,15 @@ def customer_lookup(request: Request, q: str, limit: int = 10, mode: str = "") -
             SELECT wid, phone, nickname, real_name, vin, plate_no, store_name, level_name, member_card,
                    available_point, total_point, customer_status
             FROM customers
-            WHERE phone LIKE ?
-               OR wid LIKE ?
-               OR nickname LIKE ?
-               OR real_name LIKE ?
-               OR vin LIKE ?
-               OR plate_no LIKE ?
+            WHERE deleted_at IS NULL
+              AND (
+                   phone LIKE ?
+                OR wid LIKE ?
+                OR nickname LIKE ?
+                OR real_name LIKE ?
+                OR vin LIKE ?
+                OR plate_no LIKE ?
+              )
             ORDER BY
                 CASE
                     WHEN phone = ? THEN 0
