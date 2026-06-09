@@ -841,6 +841,23 @@ def log_date_range(from_date: str = "", to_date: str = "") -> tuple[str, str]:
     return f"{start} 00:00:00", f"{end} 23:59:59"
 
 
+def optional_log_date_range(from_date: str = "", to_date: str = "") -> tuple[str, str]:
+    start = (from_date or "").strip()
+    end = (to_date or "").strip()
+    if not start and not end:
+        return "", ""
+    try:
+        start_dt = datetime.strptime(start, "%Y-%m-%d") if start else None
+        end_dt = datetime.strptime(end, "%Y-%m-%d") if end else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="日期格式不正确") from exc
+    if start_dt and end_dt and end_dt < start_dt:
+        raise HTTPException(status_code=400, detail="结束日期不能早于开始日期")
+    if start_dt and end_dt and (end_dt - start_dt).days > 366:
+        raise HTTPException(status_code=400, detail="单次最多查看 366 天")
+    return (f"{start} 00:00:00" if start else ""), (f"{end} 23:59:59" if end else "")
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "database": str(DB_PATH)}
@@ -2108,17 +2125,30 @@ def void_coupon(req: VoidCouponRequest, request: Request) -> dict:
 
 
 @app.get("/api/logs")
-def logs(request: Request, limit: int = 100) -> dict:
+def logs(
+    request: Request,
+    from_date: str = "",
+    to_date: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
     username = require_login(request)
-    limit = max(1, min(limit, 500))
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    offset = (page - 1) * page_size
+    where_parts = []
+    params: list[str] = []
+    if from_date or to_date:
+        start_text, end_text = optional_log_date_range(from_date, to_date)
+        if start_text:
+            where_parts.append("created_at >= ?")
+            params.append(start_text)
+        if end_text:
+            where_parts.append("created_at <= ?")
+            params.append(end_text)
     with db_session() as conn:
         role = admin_role(conn, username)
-        if role in {"admin", "super_admin"}:
-            rows = conn.execute(
-                "SELECT * FROM operation_logs ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        else:
+        if role not in {"admin", "super_admin"}:
             user = row_to_dict(
                 conn.execute(
                     "SELECT username, display_name, phone FROM admin_users WHERE username = ?",
@@ -2133,18 +2163,19 @@ def logs(request: Request, limit: int = 100) -> dict:
             }
             operator_names = {name for name in operator_names if name}
             if not operator_names:
-                return {"items": []}
-            placeholders = ",".join("?" for _ in operator_names)
-            rows = conn.execute(
-                f"""
-                SELECT * FROM operation_logs
-                WHERE operator IN ({placeholders})
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (*operator_names, limit),
-            ).fetchall()
-        return {"items": rows_to_dicts(rows)}
+                return {"items": [], "total": 0, "page": page, "page_size": page_size}
+            where_parts.append(f"operator IN ({','.join('?' for _ in operator_names)})")
+            params.extend(operator_names)
+        where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM operation_logs {where_sql}",
+            params,
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM operation_logs {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?",
+            (*params, page_size, offset),
+        ).fetchall()
+        return {"items": rows_to_dicts(rows), "total": total, "page": page, "page_size": page_size}
 
 
 @app.get("/api/logs/export")

@@ -309,14 +309,29 @@
           <div class="panel-head">
             <div class="panel-title">操作记录</div>
             <div class="toolbar compact">
-              <label data-permission="can_admin_users">开始<input id="logExportFrom" type="date" /></label>
-              <label data-permission="can_admin_users">结束<input id="logExportTo" type="date" /></label>
+              <label>查看开始<input id="logFilterFrom" type="date" onchange="loadLogs(true)" /></label>
+              <label>查看结束<input id="logFilterTo" type="date" onchange="loadLogs(true)" /></label>
+              <select id="logPageSize" onchange="loadLogs(true)">
+                <option value="20">20条/页</option>
+                <option value="50" selected>50条/页</option>
+                <option value="100">100条/页</option>
+                <option value="200">200条/页</option>
+              </select>
+              <button class="secondary" onclick="loadLogs(true)">查询</button>
+              <button class="secondary" onclick="resetLogFilters()">重置</button>
+              <label data-permission="can_admin_users">下载开始<input id="logExportFrom" type="date" /></label>
+              <label data-permission="can_admin_users">下载结束<input id="logExportTo" type="date" /></label>
               <button class="secondary" data-permission="can_admin_users" onclick="downloadLogs()">下载</button>
-              <button class="secondary" onclick="loadLogs()">刷新</button>
+              <button class="secondary" onclick="loadLogs(false)">刷新</button>
             </div>
           </div>
           <div class="panel-body table-wrap">
             <table><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>wid</th><th>对象</th><th>数量</th><th>备注</th></tr></thead><tbody id="logRows"></tbody></table>
+          </div>
+          <div class="pager">
+            <button class="secondary" id="logPrevPage" onclick="changeLogPage(-1)">上一页</button>
+            <span id="logPageInfo">第 1 / 1 页，共 0 条记录</span>
+            <button class="secondary" id="logNextPage" onclick="changeLogPage(1)">下一页</button>
           </div>
         </div>
       </section>
@@ -328,6 +343,6 @@
     <button type="button" class="danger" data-permission="can_void" onclick="confirmContextCouponVoid()">作废</button>
   </div>
   <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-  <script src="assets/app.js?v=20260609-log-export"></script>
+  <script src="assets/app.js?v=20260609-log-filter-page"></script>
 </body>
 </html>

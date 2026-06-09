@@ -23,6 +23,8 @@ let wechatScanConfigured = false;
 let wechatScanConfigPromise = null;
 let registerSmsTimer = null;
 let lastRedeemStoreOptions = [];
+let logPage = 1;
+let logTotal = 0;
 
 function scrollWindowTop() {
   requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
@@ -93,6 +95,7 @@ function permissions() {
 }
 
 function can(permission) {
+  if (permission === 'can_admin_users' && ['admin', 'super_admin'].includes(currentAdminProfile.role)) return true;
   return Boolean(permissions()[permission]);
 }
 
@@ -268,6 +271,9 @@ window.cancelEditCustomerDetail = cancelEditCustomerDetail;
 window.deleteCustomer = deleteCustomer;
 window.deleteAdminUser = deleteAdminUser;
 window.downloadLogs = downloadLogs;
+window.loadLogs = loadLogs;
+window.changeLogPage = changeLogPage;
+window.resetLogFilters = resetLogFilters;
 window.toggleTemplate = toggleTemplate;
 
 function formatDateTime(value) {
@@ -1839,8 +1845,24 @@ async function startCouponScanner() {
   }
 }
 
-async function loadLogs() {
-  const data = await api('/api/logs');
+function logQueryParams() {
+  const pageSize = Number($('logPageSize')?.value || 50);
+  const params = new URLSearchParams({
+    page: String(logPage),
+    page_size: String(pageSize),
+  });
+  const from = $('logFilterFrom')?.value || '';
+  const to = $('logFilterTo')?.value || '';
+  if (from) params.set('from_date', from);
+  if (to) params.set('to_date', to);
+  return { params, pageSize };
+}
+
+async function loadLogs(resetPage = false) {
+  if (resetPage) logPage = 1;
+  const { params, pageSize } = logQueryParams();
+  const data = await api('/api/logs?' + params.toString());
+  logTotal = data.total || 0;
   $('logRows').innerHTML = data.items.map((row) => `
     <tr>
       <td>${safe(row.created_at)}</td>
@@ -1852,6 +1874,24 @@ async function loadLogs() {
       <td>${safe(row.remark)}</td>
     </tr>
   `).join('');
+  const totalPages = Math.max(1, Math.ceil(logTotal / pageSize));
+  if ($('logPageInfo')) $('logPageInfo').textContent = `第 ${logPage} / ${totalPages} 页，共 ${logTotal} 条记录`;
+  if ($('logPrevPage')) $('logPrevPage').disabled = logPage <= 1;
+  if ($('logNextPage')) $('logNextPage').disabled = logPage >= totalPages;
+}
+
+async function changeLogPage(step) {
+  const pageSize = Number($('logPageSize')?.value || 50);
+  const totalPages = Math.max(1, Math.ceil(logTotal / pageSize));
+  logPage = Math.min(Math.max(1, logPage + step), totalPages);
+  await loadLogs(false);
+}
+
+async function resetLogFilters() {
+  if ($('logFilterFrom')) $('logFilterFrom').value = '';
+  if ($('logFilterTo')) $('logFilterTo').value = '';
+  logPage = 1;
+  await loadLogs(false);
 }
 
 function setDefaultLogExportDates() {
@@ -1885,7 +1925,7 @@ document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListen
   if (btn.dataset.view === 'admin-users') loadAdminUsers();
   if (btn.dataset.view === 'logs') {
     setDefaultLogExportDates();
-    loadLogs();
+    loadLogs(false);
   }
 }));
 
