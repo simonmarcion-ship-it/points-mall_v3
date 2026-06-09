@@ -1894,21 +1894,11 @@ async function resetLogFilters() {
   await loadLogs(false);
 }
 
-function setDefaultLogExportDates() {
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const dd = String(today.getDate()).padStart(2, '0');
-  const text = `${yyyy}-${mm}-${dd}`;
-  if ($('logExportFrom') && !$('logExportFrom').value) $('logExportFrom').value = text;
-  if ($('logExportTo') && !$('logExportTo').value) $('logExportTo').value = text;
-}
-
 function downloadLogs() {
-  const from = $('logExportFrom')?.value || '';
-  const to = $('logExportTo')?.value || '';
+  const from = $('logFilterFrom')?.value || '';
+  const to = $('logFilterTo')?.value || '';
   if (!from || !to) {
-    alert('请选择开始日期和结束日期');
+    alert('请选择开始日期和结束日期，再下载当前筛选结果');
     return;
   }
   const params = new URLSearchParams({ from_date: from, to_date: to });
@@ -1924,7 +1914,6 @@ document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListen
   if (btn.dataset.view === 'stores') loadStoreMaintenance();
   if (btn.dataset.view === 'admin-users') loadAdminUsers();
   if (btn.dataset.view === 'logs') {
-    setDefaultLogExportDates();
     loadLogs(false);
   }
 }));

@@ -309,8 +309,8 @@
           <div class="panel-head">
             <div class="panel-title">操作记录</div>
             <div class="toolbar compact">
-              <label>查看开始<input id="logFilterFrom" type="date" onchange="loadLogs(true)" /></label>
-              <label>查看结束<input id="logFilterTo" type="date" onchange="loadLogs(true)" /></label>
+              <label>开始日期<input id="logFilterFrom" type="date" onchange="loadLogs(true)" /></label>
+              <label>结束日期<input id="logFilterTo" type="date" onchange="loadLogs(true)" /></label>
               <select id="logPageSize" onchange="loadLogs(true)">
                 <option value="20">20条/页</option>
                 <option value="50" selected>50条/页</option>
@@ -319,8 +319,6 @@
               </select>
               <button class="secondary" onclick="loadLogs(true)">查询</button>
               <button class="secondary" onclick="resetLogFilters()">重置</button>
-              <label data-permission="can_admin_users">下载开始<input id="logExportFrom" type="date" /></label>
-              <label data-permission="can_admin_users">下载结束<input id="logExportTo" type="date" /></label>
               <button class="secondary" data-permission="can_admin_users" onclick="downloadLogs()">下载</button>
               <button class="secondary" onclick="loadLogs(false)">刷新</button>
             </div>
