@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>个人中心</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260609-redeemed-coupon-status" />
+  <link rel="stylesheet" href="/assets/styles.css?v=20260609-vehicle-coupons" />
 </head>
 <body>
   <main class="shell">
@@ -31,6 +31,10 @@
           <div class="eyebrow">个人中心</div>
           <h1 id="nickname">车主</h1>
           <p id="memberLine">会员信息加载中</p>
+          <label id="vehicleSelectorWrap" class="vehicle-selector hidden">
+            <span>当前车辆</span>
+            <select id="vehicleSelector" onchange="changeVehicle()"></select>
+          </label>
         </div>
         <div class="avatar" id="avatar">车</div>
       </header>
@@ -99,6 +103,6 @@
       </section>
     </section>
   </main>
-  <script src="/assets/app.js?v=20260609-redeemed-coupon-status"></script>
+  <script src="/assets/app.js?v=20260609-vehicle-coupons"></script>
 </body>
 </html>

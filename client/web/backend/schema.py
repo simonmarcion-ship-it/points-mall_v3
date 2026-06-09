@@ -9,6 +9,7 @@ def create_client_schema(conn: sqlite3.Connection) -> None:
 
         run_migrations(conn)
         ensure_customer_vehicle_columns(conn)
+        ensure_customer_vehicles_table(conn)
         return
     except Exception:
         pass
@@ -37,6 +38,7 @@ def create_client_schema(conn: sqlite3.Connection) -> None:
         """
     )
     ensure_customer_vehicle_columns(conn)
+    ensure_customer_vehicles_table(conn)
 
 
 def ensure_customer_vehicle_columns(conn: sqlite3.Connection) -> None:
@@ -60,3 +62,44 @@ def ensure_customer_vehicle_columns(conn: sqlite3.Connection) -> None:
     for column, column_type in columns.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE customers ADD COLUMN {column} {column_type}")
+
+
+def ensure_customer_vehicles_table(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS customer_vehicles (
+            id TEXT PRIMARY KEY,
+            customer_wid TEXT NOT NULL,
+            phone_snapshot TEXT,
+            vin TEXT,
+            plate_no TEXT,
+            car_series TEXT,
+            purchase_store_name TEXT,
+            is_primary INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 1,
+            source TEXT,
+            raw_json TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            deleted_at TEXT,
+            deleted_by TEXT,
+            deleted_reason TEXT,
+            FOREIGN KEY(customer_wid) REFERENCES customers(wid) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_customer_vehicles_customer_wid ON customer_vehicles(customer_wid);
+        CREATE INDEX IF NOT EXISTS idx_customer_vehicles_vin ON customer_vehicles(vin);
+        CREATE INDEX IF NOT EXISTS idx_customer_vehicles_plate_no ON customer_vehicles(plate_no);
+        CREATE INDEX IF NOT EXISTS idx_customer_vehicles_deleted_at ON customer_vehicles(deleted_at);
+        """
+    )
+    coupon_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'coupons'"
+    ).fetchone()
+    if coupon_table:
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(coupons)").fetchall()}
+        if "vehicle_id" not in existing:
+            conn.execute("ALTER TABLE coupons ADD COLUMN vehicle_id TEXT")
+        if "vin_snapshot" not in existing:
+            conn.execute("ALTER TABLE coupons ADD COLUMN vin_snapshot TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_coupons_vehicle_id ON coupons(vehicle_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_coupons_vin_snapshot ON coupons(vin_snapshot)")

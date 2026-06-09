@@ -3,9 +3,16 @@ const ADMIN_BASE = window.location.pathname === '/admin' || window.location.path
   ? '/admin'
   : '';
 let selectedWid = '';
+let selectedIssueVehicleId = '';
+let selectedIssueVehicleVin = '';
 let customerPage = 1;
 let customerTotal = 0;
 let selectedCustomerCoupons = [];
+let selectedCustomerVehicles = [];
+let selectedCustomerDetail = null;
+let addVehicleFormVisible = false;
+let cargeerVehicleOptions = [];
+let editingVehicleId = '';
 let customerLookupTimer = null;
 let issueLookupRows = [];
 let issueTemplateRows = [];
@@ -30,16 +37,29 @@ function scrollWindowTop() {
   requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
 }
 
+function errorMessage(payload, fallback = '\u8bf7\u6c42\u5931\u8d25') {
+  if (payload === null || payload === undefined || payload === '') return fallback;
+  if (typeof payload === 'string') return payload;
+  if (Array.isArray(payload)) {
+    return payload.map((item) => errorMessage(item, '')).filter(Boolean).join('\uff1b') || fallback;
+  }
+  if (typeof payload === 'object') {
+    const inner = payload.detail || payload.message || payload.msg || payload.error;
+    return inner ? errorMessage(inner, fallback) : JSON.stringify(payload, null, 2);
+  }
+  return String(payload);
+}
+
 async function api(path, options = {}) {
   const apiPath = path.startsWith('/api/') ? ADMIN_BASE + path : path;
   const res = await fetch(apiPath, { headers: { 'Content-Type': 'application/json' }, ...options });
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
     const text = await res.text();
-    throw new Error(text.startsWith('<') ? '服务返回了页面，请刷新后重新登录' : text || '请求失败');
+    throw new Error(text.startsWith('<') ? '\u670d\u52a1\u8fd4\u56de\u4e86\u9875\u9762\uff0c\u8bf7\u5237\u65b0\u540e\u91cd\u65b0\u767b\u5f55' : text || '\u8bf7\u6c42\u5931\u8d25');
   }
   const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || '请求失败');
+  if (!res.ok) throw new Error(errorMessage(data.detail || data));
   return data;
 }
 
@@ -442,16 +462,104 @@ async function selectCustomer(wid) {
   if (openingFromList) scrollWindowTop();
   const data = await api('/api/customers/' + encodeURIComponent(wid));
   const c = data.customer;
+  selectedCustomerDetail = c;
   if (!c.deleted_at) {
     fillIssueCustomer(c);
   }
   selectedCustomerCoupons = data.coupons;
+  selectedCustomerVehicles = data.vehicles || [];
+  addVehicleFormVisible = false;
+  cargeerVehicleOptions = [];
   renderCustomerDetail(c);
   $('couponDetail').textContent = '\u9009\u62e9\u4e00\u4e2a\u5238\u67e5\u770b\u8be6\u60c5';
   renderCustomerCoupons();
 }
 
 function renderCustomerDetail(c) {
+  const vehicles = selectedCustomerVehicles || [];
+  const canManageVehicles = can('can_admin_users') && !c.deleted_at;
+  const vehicleHtml = vehicles.length
+    ? vehicles.map((v, index) => {
+      const editing = editingVehicleId === v.id;
+      const actionHtml = canManageVehicles ? `
+        <div class="vehicle-card-actions">
+          <button type="button" class="secondary" onclick="window.startEditVehicle('${html(v.id)}')">&#32534;&#36753;</button>
+          <button type="button" class="danger" onclick="window.deleteCustomerVehicle('${html(v.id)}')">&#21024;&#38500;</button>
+        </div>
+      ` : '';
+      const editHtml = editing ? `
+        <div class="vehicle-edit-form">
+          <div class="form-grid">
+            <label>&#36710;&#26550;&#21495;<input id="editVehicleVin-${html(v.id)}" value="${html(v.vin)}" autocomplete="off" /></label>
+            <label>&#36710;&#29260;&#21495;<input id="editVehiclePlateNo-${html(v.id)}" value="${html(v.plate_no)}" /></label>
+            <label>&#36710;&#22411;&#36710;&#31995;<input id="editVehicleCarSeries-${html(v.id)}" value="${html(v.car_series)}" /></label>
+            <label>&#36141;&#20080;&#38376;&#24215;<input id="editVehiclePurchaseStore-${html(v.id)}" value="${html(v.purchase_store_name)}" /></label>
+          </div>
+          <div class="actions inline-actions">
+            <button type="button" onclick="window.saveVehicleEdit('${html(v.id)}')">&#20445;&#23384;&#36710;&#36742;</button>
+            <button type="button" class="secondary" onclick="window.cancelEditVehicle()">&#21462;&#28040;</button>
+          </div>
+        </div>
+      ` : '';
+      return `
+      <div class="vehicle-card">
+        <div class="vehicle-card-head">
+          <div class="vehicle-card-title">&#36710;&#36742; ${index + 1}${v.is_primary ? ' / &#20027;&#36710;&#36742;' : ''}</div>
+          ${actionHtml}
+        </div>
+        <div class="kv">
+          <div class="key">&#36710;&#22411;&#36710;&#31995;</div><div>${safe(v.car_series)}</div>
+          <div class="key">&#36710;&#26550;&#21495;</div><div>${formatVin(v.vin)}</div>
+          <div class="key">&#36141;&#20080;&#38376;&#24215;</div><div>${safe(v.purchase_store_name)}</div>
+          <div class="key">&#36710;&#29260;&#21495;</div><div>${safe(v.plate_no)}</div>
+        </div>
+        ${editHtml}
+      </div>
+    `;
+    }).join('')
+    : '<div class="subtle">&#26242;&#26080;&#36710;&#36742;&#20449;&#24687;</div>';
+  const cargeerOptionsHtml = (cargeerVehicleOptions || []).length
+    ? `<div class="cargeer-results">
+        <div class="subtle">&#36710;&#21830;&#24742;&#26597;&#35810;&#32467;&#26524;</div>
+        ${(cargeerVehicleOptions || []).map((item, index) => {
+          const optionVin = normalizeVin(item.vin || '');
+          const existsInCustomer = optionVin && vehicles.some((v) => normalizeVin(v.vin || '') === optionVin);
+          return `
+          <div class="cargeer-result-row">
+            <div>
+              <strong>${formatVin(item.vin) || safe(item.plate_no) || `&#36710;&#36742; ${index + 1}`}</strong>
+              <span>${safe(item.car_series)}</span>
+              <span>${safe(item.purchase_store_name)}</span>
+              <span>${safe(item.plate_no)}</span>
+              ${existsInCustomer ? '<span class="pill muted">&#24050;&#23384;&#22312;</span>' : ''}
+            </div>
+            <button type="button" class="secondary" ${existsInCustomer ? 'disabled' : ''} onclick="window.addCargeerVehicle(${index})">${existsInCustomer ? '&#24050;&#23384;&#22312;' : '&#26032;&#22686;&#36710;&#36742;'}</button>
+          </div>
+        `;
+        }).join('')}
+      </div>`
+    : '';
+  const canEditVehicles = can('can_create_customer') && !c.deleted_at;
+  const vehicleControlsHtml = canEditVehicles ? `
+    <div class="vehicle-actions">
+      <button type="button" class="secondary" onclick="window.queryCustomerVehiclesFromCargeer()">&#26597;&#35810;&#36710;&#21830;&#24742;&#36710;&#36742;</button>
+      <button type="button" class="secondary" onclick="window.toggleAddVehicleForm()">&#25163;&#21160;&#26032;&#22686;&#36710;&#36742;</button>
+    </div>
+    <div id="addVehicleForm" class="${addVehicleFormVisible ? '' : 'hidden'}">
+      <div class="form-grid">
+        <label>&#36710;&#26550;&#21495;<input id="newVehicleVin" placeholder="17 &#20301; VIN" autocomplete="off" /></label>
+        <label>&#36710;&#29260;&#21495;<input id="newVehiclePlateNo" placeholder="&#36710;&#29260;&#21495;" /></label>
+        <label>&#36710;&#22411;&#36710;&#31995;<input id="newVehicleCarSeries" placeholder="&#36710;&#22411;&#36710;&#31995;" /></label>
+        <label>&#36141;&#20080;&#38376;&#24215;<input id="newVehiclePurchaseStore" placeholder="&#36141;&#20080;&#38376;&#24215;" /></label>
+      </div>
+      <div class="actions inline-actions">
+        <button type="button" onclick="window.addCustomerVehicle()">&#20445;&#23384;&#36710;&#36742;</button>
+        <button type="button" class="secondary" onclick="window.toggleAddVehicleForm(false)">&#21462;&#28040;</button>
+      </div>
+    </div>
+    ${cargeerOptionsHtml}
+    <p id="vehicleMessage" class="message"></p>
+  ` : '';
   const deletedInfo = c.deleted_at
     ? `<div class="key">删除时间</div><div>${safe(c.deleted_at)}</div>
         <div class="key">删除人</div><div>${safe(c.deleted_by)}</div>
@@ -476,10 +584,6 @@ function renderCustomerDetail(c) {
         <div class="key">性别</div><div>${formatGender(c.gender)}</div>
         <div class="key">生日</div><div>${formatDateTime(c.birthday)}</div>
         <div class="key">姓名</div><div>${safe(c.real_name)}</div>
-        <div class="key">车型车系</div><div>${safe(c.car_series)}</div>
-        <div class="key">车架号</div><div>${formatVin(c.vin)}</div>
-        <div class="key">购买门店</div><div>${safe(c.purchase_store_name)}</div>
-        <div class="key">车牌号</div><div>${safe(c.plate_no)}</div>
         <div class="key">车辆信息状态</div><div>${formatBool(c.vehicle_query_success)} ${safe(c.vehicle_errcode) !== '-' ? `(${safe(c.vehicle_errcode)} ${safe(c.vehicle_errmsg)})` : ''}</div>
         <div class="key">&#25104;&#20026;&#23458;&#25143;&#26102;&#38388;</div><div>${formatDateTime(c.became_customer_at)}</div>
         <div class="key">&#20837;&#20250;&#26102;&#38388;</div><div>${formatDateTime(c.joined_at)}</div>
@@ -497,16 +601,17 @@ function renderCustomerDetail(c) {
           <label>性别<input id="editCustomerGender" value="${html(c.gender)}" /></label>
           <label>生日<input id="editCustomerBirthday" type="date" value="${html((c.birthday || '').slice(0, 10))}" /></label>
           <label>姓名<input id="editCustomerRealName" value="${html(c.real_name)}" /></label>
-          <label>车型车系<input id="editCustomerCarSeries" value="${html(c.car_series)}" /></label>
-          <label>车架号<input id="editCustomerVin" value="${html(c.vin)}" /></label>
-          <label>购买门店<input id="editCustomerPurchaseStore" value="${html(c.purchase_store_name)}" /></label>
-          <label>车牌号<input id="editCustomerPlateNo" value="${html(c.plate_no)}" /></label>
         </div>
         <div class="actions inline-actions">
           <button type="button" onclick="saveCustomerDetail()">保存</button>
           <button type="button" class="secondary" onclick="cancelEditCustomerDetail()">取消</button>
         </div>
         <p id="editCustomerMessage" class="message"></p>
+      </div>
+      <div class="vehicle-section">
+        <h3>车辆信息</h3>
+        ${vehicleControlsHtml}
+        ${vehicleHtml}
       </div>
     `;
     return;
@@ -521,18 +626,178 @@ function renderCustomerDetail(c) {
     <div class="key">&#31561;&#32423;</div><div>${safe(c.level_name || c.member_card)}</div>
     <div class="key">&#23458;&#25143;&#24402;&#23646;&#38376;&#24215;</div><div>${safe(c.store_name)}</div>
     <div class="key">姓名</div><div>${safe(c.real_name)}</div>
-    <div class="key">车型车系</div><div>${safe(c.car_series)}</div>
-    <div class="key">车架号</div><div>${formatVin(c.vin)}</div>
-    <div class="key">购买门店</div><div>${safe(c.purchase_store_name)}</div>
-    <div class="key">车牌号</div><div>${safe(c.plate_no)}</div>
     <div class="key">车辆信息状态</div><div>${formatBool(c.vehicle_query_success)} ${safe(c.vehicle_errcode) !== '-' ? `(${safe(c.vehicle_errcode)} ${safe(c.vehicle_errmsg)})` : ''}</div>
     <div class="key">&#25104;&#20026;&#23458;&#25143;&#26102;&#38388;</div><div>${formatDateTime(c.became_customer_at)}</div>
     <div class="key">&#20837;&#20250;&#26102;&#38388;</div><div>${formatDateTime(c.joined_at)}</div>
     <div class="key">&#23458;&#25143;&#29366;&#24577;</div><div>${formatCustomerStatus(c.customer_status)}</div>
     <div class="key">&#40657;&#21517;&#21333;</div><div>${formatBool(c.black_user)}</div>
     ${deletedInfo}
+  </div>
+  <div class="vehicle-section">
+    <h3>车辆信息</h3>
+    ${vehicleControlsHtml}
+    ${vehicleHtml}
   </div>`;
 }
+
+
+
+
+function setVehicleMessage(text, ok = true) {
+  const msg = $('vehicleMessage');
+  if (!msg) return;
+  msg.className = ok ? 'message ok' : 'message error';
+  msg.textContent = text;
+}
+
+function applyVehicleResponse(data, message) {
+  selectedCustomerDetail = data.customer;
+  selectedCustomerVehicles = data.vehicles || [];
+  renderCustomerDetail(data.customer);
+  if (message) setVehicleMessage(message, true);
+}
+
+function currentDetailWid() {
+  return selectedCustomerDetail?.wid || selectedWid || '';
+}
+
+function toggleAddVehicleForm(force) {
+  addVehicleFormVisible = typeof force === 'boolean' ? force : !addVehicleFormVisible;
+  if (selectedCustomerDetail) renderCustomerDetail(selectedCustomerDetail);
+}
+
+async function queryCustomerVehiclesFromCargeer() {
+  const detailWid = currentDetailWid();
+  if (!detailWid) return;
+  const msg = $('vehicleMessage');
+  if (msg) {
+    msg.className = 'message';
+    msg.innerHTML = '<span class="spinner"></span> \u6b63\u5728\u4ece\u8f66\u5546\u60a6\u67e5\u8be2\u8f66\u8f86\u4fe1\u606f...';
+  }
+  try {
+    const data = await api('/api/customers/' + encodeURIComponent(detailWid) + '/vehicles/query-cargeer', { method: 'POST' });
+    selectedCustomerDetail = data.customer;
+    selectedCustomerVehicles = data.vehicles || [];
+    cargeerVehicleOptions = data.options || [];
+    renderCustomerDetail(data.customer);
+    setVehicleMessage(data.message || `\u8f66\u5546\u60a6\u67e5\u8be2\u5b8c\u6210\uff1a\u627e\u5230 ${cargeerVehicleOptions.length} \u6761\u8f66\u8f86\u4fe1\u606f`, true);
+  } catch (err) {
+    setVehicleMessage(err.message, false);
+  }
+}
+
+async function addCargeerVehicle(index) {
+  const detailWid = currentDetailWid();
+  const item = (cargeerVehicleOptions || [])[index];
+  if (!detailWid || !item) return;
+  try {
+    const data = await api('/api/customers/' + encodeURIComponent(detailWid) + '/vehicles', {
+      method: 'POST',
+      body: JSON.stringify({
+        vin: normalizeVin(item.vin || ''),
+        plate_no: item.plate_no || '',
+        car_series: item.car_series || '',
+        purchase_store_name: item.purchase_store_name || '',
+      }),
+    });
+    cargeerVehicleOptions.splice(index, 1);
+    addVehicleFormVisible = false;
+    selectedCustomerDetail = data.customer;
+    selectedCustomerVehicles = data.vehicles || [];
+    renderCustomerDetail(data.customer);
+    setVehicleMessage('\u8f66\u8f86\u5df2\u65b0\u589e', true);
+  } catch (err) {
+    setVehicleMessage(err.message, false);
+    alert(err.message);
+  }
+}
+
+async function addCustomerVehicle() {
+  const detailWid = currentDetailWid();
+  if (!detailWid) return;
+  const vin = normalizeVin($('newVehicleVin')?.value || '');
+  if (vin && !isValidVin(vin)) {
+    setVehicleMessage('\u8f66\u67b6\u53f7\u683c\u5f0f\u4e0d\u6b63\u786e\uff1a\u5e94\u4e3a 17 \u4f4d VIN\uff0c\u4e14\u4e0d\u80fd\u5305\u542b I\u3001O\u3001Q', false);
+    return;
+  }
+  try {
+    const data = await api('/api/customers/' + encodeURIComponent(detailWid) + '/vehicles', {
+      method: 'POST',
+      body: JSON.stringify({
+        vin,
+        plate_no: $('newVehiclePlateNo')?.value || '',
+        car_series: $('newVehicleCarSeries')?.value || '',
+        purchase_store_name: $('newVehiclePurchaseStore')?.value || '',
+      }),
+    });
+    addVehicleFormVisible = false;
+    applyVehicleResponse(data, '\u8f66\u8f86\u5df2\u65b0\u589e');
+  } catch (err) {
+    setVehicleMessage(err.message, false);
+    alert(err.message);
+  }
+}
+
+
+function startEditVehicle(vehicleId) {
+  editingVehicleId = vehicleId || '';
+  if (selectedCustomerDetail) renderCustomerDetail(selectedCustomerDetail);
+}
+
+function cancelEditVehicle() {
+  editingVehicleId = '';
+  if (selectedCustomerDetail) renderCustomerDetail(selectedCustomerDetail);
+}
+
+async function saveVehicleEdit(vehicleId) {
+  const detailWid = currentDetailWid();
+  if (!detailWid || !vehicleId) return;
+  const vin = normalizeVin($(`editVehicleVin-${vehicleId}`)?.value || '');
+  if (vin && !isValidVin(vin)) {
+    setVehicleMessage('\u8f66\u67b6\u53f7\u683c\u5f0f\u4e0d\u6b63\u786e\uff1a\u5e94\u4e3a 17 \u4f4d VIN\uff0c\u4e14\u4e0d\u80fd\u5305\u542b I\u3001O\u3001Q', false);
+    return;
+  }
+  try {
+    const data = await api('/api/customers/' + encodeURIComponent(detailWid) + '/vehicles/' + encodeURIComponent(vehicleId), {
+      method: 'PATCH',
+      body: JSON.stringify({
+        vin,
+        plate_no: $(`editVehiclePlateNo-${vehicleId}`)?.value || '',
+        car_series: $(`editVehicleCarSeries-${vehicleId}`)?.value || '',
+        purchase_store_name: $(`editVehiclePurchaseStore-${vehicleId}`)?.value || '',
+      }),
+    });
+    editingVehicleId = '';
+    applyVehicleResponse(data, '\u8f66\u8f86\u5df2\u4fdd\u5b58');
+  } catch (err) {
+    setVehicleMessage(err.message, false);
+  }
+}
+
+async function deleteCustomerVehicle(vehicleId) {
+  const detailWid = currentDetailWid();
+  if (!detailWid || !vehicleId) return;
+  if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8be5\u8f66\u8f86\u5417\uff1f\n\n\u5982\u679c\u8be5\u8f66\u8f86\u5df2\u5173\u8054\u5238\u8bb0\u5f55\uff0c\u7cfb\u7edf\u4f1a\u963b\u6b62\u5220\u9664\u3002')) return;
+  try {
+    const data = await api('/api/customers/' + encodeURIComponent(detailWid) + '/vehicles/' + encodeURIComponent(vehicleId), {
+      method: 'DELETE',
+    });
+    editingVehicleId = '';
+    applyVehicleResponse(data, '\u8f66\u8f86\u5df2\u5220\u9664');
+  } catch (err) {
+    setVehicleMessage(err.message, false);
+    alert(err.message);
+  }
+}
+
+window.startEditVehicle = startEditVehicle;
+window.cancelEditVehicle = cancelEditVehicle;
+window.saveVehicleEdit = saveVehicleEdit;
+window.deleteCustomerVehicle = deleteCustomerVehicle;
+window.toggleAddVehicleForm = toggleAddVehicleForm;
+window.queryCustomerVehiclesFromCargeer = queryCustomerVehiclesFromCargeer;
+window.addCargeerVehicle = addCargeerVehicle;
+window.addCustomerVehicle = addCustomerVehicle;
 
 function startEditCustomerDetail() {
   $('customerReadonlyDetail').classList.add('hidden');
@@ -561,17 +826,14 @@ async function saveCustomerDetail() {
         gender: $('editCustomerGender').value,
         birthday: $('editCustomerBirthday').value,
         real_name: $('editCustomerRealName').value,
-        car_series: $('editCustomerCarSeries').value,
-        vin: normalizeVin($('editCustomerVin').value),
-        purchase_store_name: $('editCustomerPurchaseStore').value,
-        plate_no: $('editCustomerPlateNo').value,
       }),
     });
     msg.className = 'message ok';
     msg.textContent = '客户资料已保存';
     renderCustomerDetail(data.customer);
-    if (data.customer?.vin) {
-      fillIssueCustomer(data.customer);
+    const primaryVehicle = (selectedCustomerVehicles || []).find((item) => item.is_primary) || (selectedCustomerVehicles || [])[0];
+    if (primaryVehicle?.vin) {
+      fillIssueCustomer({ ...data.customer, ...primaryVehicle, vehicle_id: primaryVehicle.id });
     }
     await searchCustomers(false);
   } catch (err) {
@@ -612,6 +874,7 @@ function renderCustomerCoupons() {
     return `
     <tr class="clickable-row" title="右键打开操作菜单" onclick="showCouponDetail(${originalIndex})" oncontextmenu="openCouponContextMenu(event, ${originalIndex})">
       <td data-label="券码">${safe(row.code)}</td>
+      <td data-label="VIN">${formatVin(row.vin_snapshot)}</td>
       <td data-label="名称">${safe(row.template_name)}</td>
       <td data-label="状态">${statusTag(normalizeCouponStatus(row), normalizeCouponStatus(row) === 'expired' ? '已过期' : (row.status_text || row.status))}</td>
       <td data-label="领取时间">${safe(row.receive_time)}</td>
@@ -766,6 +1029,8 @@ function backToCustomerList() {
 
 function fillIssueCustomer(customer) {
   selectedWid = customer.wid || '';
+  selectedIssueVehicleId = customer.vehicle_id || customer.primary_vehicle_id || '';
+  selectedIssueVehicleVin = normalizeVin(customer.vin || '');
   $('issueWid').value = safe(customer.wid) === '-' ? '' : customer.wid;
   $('issuePhone').value = safe(customer.phone) === '-' ? '' : customer.phone;
   if ($('issueVin')) $('issueVin').value = safe(customer.vin) === '-' ? '' : customer.vin;
@@ -780,6 +1045,8 @@ function fillIssueCustomer(customer) {
 
 function clearIssueCustomerFields() {
   selectedWid = '';
+  selectedIssueVehicleId = '';
+  selectedIssueVehicleVin = '';
   issueLookupRows = [];
   $('issueWid').value = '';
   $('issuePhone').value = '';
@@ -1100,8 +1367,8 @@ async function loadStores() {
   const storeIdOptions = data.items.map((row) => (
     `<option value="${html(row.id)}">${html(row.name)}</option>`
   )).join('');
-  $('storeFilter').innerHTML = `<option value="">????</option>${options}`;
-  $('newCustomerStore').innerHTML = `<option value="">?????</option>${options}`;
+  $('storeFilter').innerHTML = `<option value="">\u5168\u90e8\u95e8\u5e97</option>${options}`;
+  $('newCustomerStore').innerHTML = `<option value="">\u8bf7\u9009\u62e9\u95e8\u5e97</option>${options}`;
   if ($('newAdminStore')) $('newAdminStore').innerHTML = storeIdOptions;
   renderOperationStoreOptions();
   renderIssueStorePicker(data.items.map((row) => ({
@@ -1513,6 +1780,8 @@ async function issueCoupon() {
       method: 'POST',
       body: JSON.stringify({
         wid: $('issueWid').value,
+        vehicle_id: normalizeVin($('issueVin').value) === selectedIssueVehicleVin ? selectedIssueVehicleId : '',
+        vin: normalizeVin($('issueVin').value),
         template_id: template.id,
         quantity: Number($('issueQuantity').value),
         validity_type: $('issueValidityType').value,

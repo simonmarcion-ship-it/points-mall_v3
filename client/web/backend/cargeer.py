@@ -5,7 +5,7 @@ import json
 import logging
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import requests
 
@@ -67,6 +67,7 @@ class CargeerLookup:
     raw_member: dict | None = None
     raw_detail: dict | None = None
     raw_vehicle: dict | None = None
+    vehicles: list[dict] = field(default_factory=list)
 
     def as_customer_fields(self) -> dict:
         return {
@@ -86,7 +87,9 @@ class CargeerLookup:
                 "member": self.raw_member or {},
                 "detail": self.raw_detail or {},
                 "vehicle": self.raw_vehicle or {},
+                "vehicles": self.vehicles,
             },
+            "vehicles": self.vehicles,
         }
 
 
@@ -240,6 +243,7 @@ class CargeerClient:
         detail = self.get_detail(rp_token, member_id, card_number) if member_id and card_number else {}
         vehicles = self.get_vehicles(rp_token, member_id) if member_id else []
         vehicle = first_vehicle(vehicles)
+        vehicle_options = vehicle_rows(vehicles, detail, member)
 
         return CargeerLookup(
             real_name=text(detail.get("NAME") or member.get("NAME")),
@@ -254,6 +258,7 @@ class CargeerClient:
             raw_member=member,
             raw_detail=detail,
             raw_vehicle=vehicle,
+            vehicles=vehicle_options,
         )
 
 
@@ -274,6 +279,23 @@ def first_vehicle(rows: list[dict]) -> dict:
         if text(row.get("VIN") or row.get("vin")) or text(row.get("PLATENUMBER") or row.get("PLATENUM")):
             return row
     return rows[0] if rows else {}
+
+
+def vehicle_rows(rows: list[dict], detail: dict, member: dict) -> list[dict]:
+    output = []
+    store_name = text(detail.get("ORGUNITNAME") or member.get("ORGUNITNAME"))
+    for index, row in enumerate(rows or []):
+        output.append(
+            {
+                "index": index,
+                "vin": normalize_vin(row.get("VIN") or row.get("vin")),
+                "plate_no": text(row.get("PLATENUMBER") or row.get("PLATENUM")),
+                "car_series": vehicle_series(row),
+                "purchase_store_name": store_name,
+                "raw_json": row,
+            }
+        )
+    return output
 
 
 def member_query_payload(rp_token: str) -> dict:

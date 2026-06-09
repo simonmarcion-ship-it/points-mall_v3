@@ -47,7 +47,9 @@ wechat_jsapi_ticket_cache: dict = {}
 
 
 class IssueCouponRequest(BaseModel):
-    wid: str
+    wid: str = ""
+    vehicle_id: str = ""
+    vin: str = ""
     template_id: str
     quantity: int = 1
     validity_type: str = "days"
@@ -126,6 +128,13 @@ class UpdateCustomerRequest(BaseModel):
 
 class DeleteCustomerRequest(BaseModel):
     reason: str = ""
+
+
+class CustomerVehicleRequest(BaseModel):
+    vin: str = ""
+    plate_no: str = ""
+    car_series: str = ""
+    purchase_store_name: str = ""
 
 
 class CreateTemplateRequest(BaseModel):
@@ -304,11 +313,13 @@ def validate_customer_vin(conn, vin: str, current_wid: str = "") -> str:
     existing = row_to_dict(
         conn.execute(
             """
-            SELECT wid, phone, nickname, real_name, vin
-            FROM customers
-            WHERE UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
-              AND wid != ?
-              AND deleted_at IS NULL
+            SELECT c.wid, c.phone, c.nickname, c.real_name, v.vin
+            FROM customer_vehicles v
+            JOIN customers c ON c.wid = v.customer_wid
+            WHERE UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(v.vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+              AND v.customer_wid != ?
+              AND v.deleted_at IS NULL
+              AND c.deleted_at IS NULL
             LIMIT 1
             """,
             (normalized, current_wid),
@@ -325,6 +336,376 @@ def validate_customer_vin(conn, vin: str, current_wid: str = "") -> str:
 
 def validate_new_customer_vin(conn, vin: str) -> str:
     return validate_customer_vin(conn, vin)
+
+
+def customer_vehicle_rows(conn, wid: str, include_deleted: bool = False) -> list[dict]:
+    deleted_filter = "" if include_deleted else " AND deleted_at IS NULL"
+    return rows_to_dicts(
+        conn.execute(
+            f"""
+            SELECT *
+            FROM customer_vehicles
+            WHERE customer_wid = ?{deleted_filter}
+            ORDER BY is_primary DESC, sort_order ASC, created_at ASC, id ASC
+            """,
+            (wid,),
+        ).fetchall()
+    )
+
+
+def primary_vehicle(conn, wid: str) -> dict:
+    rows = customer_vehicle_rows(conn, wid)
+    return rows[0] if rows else {}
+
+
+def upsert_primary_vehicle(conn, customer: dict, vehicle: dict, source: str = "manual") -> None:
+    vin = normalize_vin(vehicle.get("vin") or "")
+    plate_no = (vehicle.get("plate_no") or "").strip()
+    car_series = (vehicle.get("car_series") or "").strip()
+    purchase_store_name = (vehicle.get("purchase_store_name") or "").strip()
+    if not any([vin, plate_no, car_series, purchase_store_name]):
+        return
+    existing = row_to_dict(
+        conn.execute(
+            """
+            SELECT *
+            FROM customer_vehicles
+            WHERE customer_wid = ? AND deleted_at IS NULL
+            ORDER BY is_primary DESC, sort_order ASC, created_at ASC, id ASC
+            LIMIT 1
+            """,
+            (customer["wid"],),
+        ).fetchone()
+    )
+    if existing:
+        conn.execute(
+            """
+            UPDATE customer_vehicles
+            SET phone_snapshot = ?, vin = ?, plate_no = ?, car_series = ?,
+                purchase_store_name = ?, is_primary = 1, source = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                customer.get("phone") or "",
+                vin,
+                plate_no,
+                car_series,
+                purchase_store_name,
+                source,
+                now_text(),
+                existing["id"],
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO customer_vehicles (
+                id, customer_wid, phone_snapshot, vin, plate_no, car_series,
+                purchase_store_name, is_primary, sort_order, source, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)
+            """,
+            (
+                local_id("VEH"),
+                customer["wid"],
+                customer.get("phone") or "",
+                vin,
+                plate_no,
+                car_series,
+                purchase_store_name,
+                source,
+                now_text(),
+                now_text(),
+            ),
+        )
+
+
+def upsert_customer_vehicle(
+    conn,
+    customer: dict,
+    vehicle: dict,
+    source: str = "manual",
+    allow_update: bool = True,
+) -> tuple[str, dict]:
+    vin = validate_customer_vin(conn, vehicle.get("vin") or "", customer["wid"])
+    plate_no = (vehicle.get("plate_no") or "").strip()
+    car_series = (vehicle.get("car_series") or "").strip()
+    purchase_store_name = (vehicle.get("purchase_store_name") or "").strip()
+    if not any([vin, plate_no, car_series, purchase_store_name]):
+        raise HTTPException(status_code=400, detail="请至少填写车架号、车牌号、车型或购买门店之一")
+
+    existing = None
+    if vin:
+        existing = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM customer_vehicles
+                WHERE customer_wid = ? AND deleted_at IS NULL
+                  AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+                LIMIT 1
+                """,
+                (customer["wid"], vin),
+            ).fetchone()
+        )
+    if not existing and plate_no:
+        if vin:
+            existing = row_to_dict(
+                conn.execute(
+                    """
+                    SELECT *
+                    FROM customer_vehicles
+                    WHERE customer_wid = ? AND deleted_at IS NULL AND TRIM(COALESCE(plate_no, '')) = ?
+                      AND (
+                        COALESCE(TRIM(vin), '') = ''
+                        OR UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+                      )
+                    LIMIT 1
+                    """,
+                    (customer["wid"], plate_no, vin),
+                ).fetchone()
+            )
+        else:
+            existing = row_to_dict(
+                conn.execute(
+                    """
+                    SELECT *
+                    FROM customer_vehicles
+                    WHERE customer_wid = ? AND deleted_at IS NULL AND TRIM(COALESCE(plate_no, '')) = ?
+                    LIMIT 1
+                    """,
+                    (customer["wid"], plate_no),
+                ).fetchone()
+            )
+    if existing and not allow_update:
+        raise HTTPException(status_code=400, detail="该客户已存在相同车辆，不能重复新增")
+
+    if not existing and vin:
+        duplicate_same_customer = row_to_dict(
+            conn.execute(
+                """
+                SELECT id
+                FROM customer_vehicles
+                WHERE customer_wid = ? AND deleted_at IS NULL
+                  AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+                LIMIT 1
+                """,
+                (customer["wid"], vin),
+            ).fetchone()
+        )
+        if duplicate_same_customer:
+            raise HTTPException(status_code=400, detail="该客户已存在相同车架号的车辆，不能重复新增")
+
+    vehicle_count = conn.execute(
+        "SELECT COUNT(*) FROM customer_vehicles WHERE customer_wid = ? AND deleted_at IS NULL",
+        (customer["wid"],),
+    ).fetchone()[0]
+    is_primary = 1 if vehicle_count == 0 else int(existing.get("is_primary") or 0) if existing else 0
+    sort_order = int(existing.get("sort_order") or 0) if existing else vehicle_count + 1
+    now = now_text()
+    raw_json = json.dumps(vehicle.get("raw_json") or {}, ensure_ascii=False)
+
+    if existing:
+        conn.execute(
+            """
+            UPDATE customer_vehicles
+            SET phone_snapshot = ?, vin = ?, plate_no = ?, car_series = ?,
+                purchase_store_name = ?, source = ?, raw_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                customer.get("phone") or "",
+                vin,
+                plate_no,
+                car_series,
+                purchase_store_name,
+                source,
+                raw_json,
+                now,
+                existing["id"],
+            ),
+        )
+        row = row_to_dict(conn.execute("SELECT * FROM customer_vehicles WHERE id = ?", (existing["id"],)).fetchone())
+        return "updated", row
+
+    vehicle_id = local_id("VEH")
+    conn.execute(
+        """
+        INSERT INTO customer_vehicles (
+            id, customer_wid, phone_snapshot, vin, plate_no, car_series,
+            purchase_store_name, is_primary, sort_order, source, raw_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            vehicle_id,
+            customer["wid"],
+            customer.get("phone") or "",
+            vin,
+            plate_no,
+            car_series,
+            purchase_store_name,
+            is_primary,
+            sort_order,
+            source,
+            raw_json,
+            now,
+            now,
+        ),
+    )
+    row = row_to_dict(conn.execute("SELECT * FROM customer_vehicles WHERE id = ?", (vehicle_id,)).fetchone())
+    return "created", row
+
+
+def customer_payload_with_vehicles(conn, wid: str) -> dict:
+    customer = customer_with_primary_vehicle(conn, require_customer(conn, wid))
+    return {"customer": customer, "vehicles": customer_vehicle_rows(conn, wid)}
+
+
+def require_customer_vehicle(conn, wid: str, vehicle_id: str) -> dict:
+    vehicle = row_to_dict(
+        conn.execute(
+            """
+            SELECT *
+            FROM customer_vehicles
+            WHERE id = ? AND customer_wid = ? AND deleted_at IS NULL
+            """,
+            ((vehicle_id or "").strip(), wid),
+        ).fetchone()
+    )
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="\u8f66\u8f86\u4e0d\u5b58\u5728\u6216\u5df2\u5220\u9664")
+    return vehicle
+
+
+def ensure_vehicle_unique_for_update(conn, wid: str, vehicle_id: str, vin: str, plate_no: str) -> None:
+    if vin:
+        existing = row_to_dict(
+            conn.execute(
+                """
+                SELECT id, customer_wid
+                FROM customer_vehicles
+                WHERE deleted_at IS NULL
+                  AND id != ?
+                  AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+                LIMIT 1
+                """,
+                (vehicle_id, vin),
+            ).fetchone()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="\u8f66\u67b6\u53f7\u5df2\u5b58\u5728\uff0c\u4e0d\u80fd\u91cd\u590d\u7ed1\u5b9a")
+    if plate_no:
+        existing = row_to_dict(
+            conn.execute(
+                """
+                SELECT id
+                FROM customer_vehicles
+                WHERE customer_wid = ? AND deleted_at IS NULL AND id != ? AND TRIM(COALESCE(plate_no, '')) = ?
+                LIMIT 1
+                """,
+                (wid, vehicle_id, plate_no),
+            ).fetchone()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="\u8be5\u5ba2\u6237\u5df2\u5b58\u5728\u76f8\u540c\u8f66\u724c\u53f7\u7684\u8f66\u8f86")
+
+
+def find_customer_vehicle(conn, wid: str, vehicle_id: str = "", vin: str = "") -> dict:
+    cleaned_id = (vehicle_id or "").strip()
+    cleaned_vin = normalize_vin(vin or "")
+    if cleaned_id:
+        vehicle = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM customer_vehicles
+                WHERE id = ? AND customer_wid = ? AND deleted_at IS NULL
+                """,
+                (cleaned_id, wid),
+            ).fetchone()
+        )
+        if vehicle:
+            return vehicle
+    if cleaned_vin:
+        vehicle = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM customer_vehicles
+                WHERE customer_wid = ?
+                  AND deleted_at IS NULL
+                  AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+                ORDER BY is_primary DESC, sort_order ASC, created_at ASC, id ASC
+                LIMIT 1
+                """,
+                (wid, cleaned_vin),
+            ).fetchone()
+        )
+        if vehicle:
+            return vehicle
+    return primary_vehicle(conn, wid)
+
+
+def require_issue_vehicle(conn, vehicle_id: str = "", vin: str = "") -> tuple[dict, dict]:
+    cleaned_id = (vehicle_id or "").strip()
+    cleaned_vin = normalize_vin(vin or "")
+    row = {}
+
+    if cleaned_id:
+        row = row_to_dict(
+            conn.execute(
+                """
+                SELECT v.*, c.wid AS customer_wid, c.phone AS customer_phone, c.nickname AS customer_nickname,
+                       c.real_name AS customer_real_name, c.store_name AS customer_store_name,
+                       c.level_name AS customer_level_name, c.member_card AS customer_member_card
+                FROM customer_vehicles v
+                JOIN customers c ON c.wid = v.customer_wid
+                WHERE v.id = ? AND v.deleted_at IS NULL AND c.deleted_at IS NULL
+                LIMIT 1
+                """,
+                (cleaned_id,),
+            ).fetchone()
+        )
+        if row and cleaned_vin:
+            row_vin = normalize_vin(row.get("vin") or "")
+            if row_vin != cleaned_vin:
+                row = {}
+
+    if not row and cleaned_vin:
+        row = row_to_dict(
+            conn.execute(
+                """
+                SELECT v.*, c.wid AS customer_wid, c.phone AS customer_phone, c.nickname AS customer_nickname,
+                       c.real_name AS customer_real_name, c.store_name AS customer_store_name,
+                       c.level_name AS customer_level_name, c.member_card AS customer_member_card
+                FROM customer_vehicles v
+                JOIN customers c ON c.wid = v.customer_wid
+                WHERE v.deleted_at IS NULL
+                  AND c.deleted_at IS NULL
+                  AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(v.vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+                ORDER BY v.is_primary DESC, v.sort_order ASC, v.created_at DESC, v.id DESC
+                LIMIT 1
+                """,
+                (cleaned_vin,),
+            ).fetchone()
+        )
+
+    if not cleaned_id and not cleaned_vin:
+        raise HTTPException(status_code=400, detail="\u8bf7\u5148\u8f93\u5165\u6216\u9009\u62e9\u8f66\u67b6\u53f7")
+    if not row:
+        raise HTTPException(status_code=404, detail="\u672a\u627e\u5230\u8be5\u8f66\u67b6\u53f7\u5bf9\u5e94\u7684\u8f66\u8f86")
+    customer = require_customer(conn, row["customer_wid"])
+    return row, customer
+
+
+def customer_with_primary_vehicle(conn, customer: dict) -> dict:
+    vehicle = primary_vehicle(conn, customer.get("wid") or "")
+    if not vehicle:
+        return customer
+    merged = dict(customer)
+    for key in ("vin", "plate_no", "car_series", "purchase_store_name"):
+        merged[key] = vehicle.get(key) or merged.get(key) or ""
+    merged["primary_vehicle_id"] = vehicle.get("id")
+    return merged
 
 
 def validate_customer_phone_unique(conn, phone: str, current_wid: str = "") -> str:
@@ -1181,8 +1562,8 @@ def search_customers(
                     OR c.nickname LIKE ?
                     OR c.member_card LIKE ?
                     OR c.store_name LIKE ?
-                    OR c.plate_no LIKE ?
-                    OR c.vin LIKE ?
+                    OR v.plate_no LIKE ?
+                    OR v.vin LIKE ?
                     OR c.real_name LIKE ?
                 )
                 """
@@ -1209,7 +1590,10 @@ def search_customers(
             f"""
             SELECT
                 c.wid, c.phone, c.nickname, c.level_name, c.member_card, c.store_name,
-                c.real_name, c.vin, c.plate_no, c.car_series,
+                c.real_name,
+                COALESCE(v.vin, c.vin) AS vin,
+                COALESCE(v.plate_no, c.plate_no) AS plate_no,
+                COALESCE(v.car_series, c.car_series) AS car_series,
                 c.became_customer_at, c.joined_at, c.available_point, c.total_point,
                 c.available_balance, c.black_user, c.customer_status,
                 c.deleted_at, c.deleted_by, c.deleted_reason,
@@ -1221,6 +1605,7 @@ def search_customers(
                     END
                 ) AS unused_coupon_count
             FROM customers c
+            LEFT JOIN customer_vehicles v ON v.customer_wid = c.wid AND v.deleted_at IS NULL AND v.is_primary = 1
             LEFT JOIN coupons cp ON cp.customer_wid = c.wid
             {where}
             GROUP BY c.wid
@@ -1229,7 +1614,15 @@ def search_customers(
             """,
             (*params, limit, offset),
         ).fetchall()
-        total = conn.execute(f"SELECT COUNT(*) FROM customers c {where}", params).fetchone()[0]
+        total = conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT c.wid)
+            FROM customers c
+            LEFT JOIN customer_vehicles v ON v.customer_wid = c.wid AND v.deleted_at IS NULL AND v.is_primary = 1
+            {where}
+            """,
+            params,
+        ).fetchone()[0]
         return {"items": rows_to_dicts(rows), "total": total}
 
 
@@ -1239,19 +1632,24 @@ def customer_detail(wid: str, request: Request) -> dict:
     with db_session() as conn:
         role = admin_role(conn, username)
         customer = require_customer(conn, wid, include_deleted=role in {"admin", "super_admin"})
+        vehicles = customer_vehicle_rows(conn, wid, include_deleted=False)
+        customer = customer_with_primary_vehicle(conn, customer)
         coupons = apply_dynamic_coupon_statuses(rows_to_dicts(
             conn.execute(
                 """
-                SELECT cp.*, ct.rule_text AS rule_text
+                SELECT cp.*,
+                       COALESCE(NULLIF(cp.vin_snapshot, ''), v.vin) AS vin_snapshot,
+                       ct.rule_text AS rule_text
                 FROM coupons cp
                 LEFT JOIN coupon_templates ct ON ct.id = cp.template_id
+                LEFT JOIN customer_vehicles v ON v.id = cp.vehicle_id
                 WHERE cp.customer_wid = ?
                 ORDER BY cp.receive_time DESC, cp.code DESC
                 """,
                 (wid,),
             ).fetchall()
         ))
-        return {"customer": customer, "coupons": coupons}
+        return {"customer": customer, "vehicles": vehicles, "coupons": coupons}
 
 
 @app.patch("/api/customers/{wid}")
@@ -1283,18 +1681,15 @@ def update_customer(wid: str, req: UpdateCustomerRequest, request: Request) -> d
         if req.real_name is not None:
             updates.append("real_name = ?")
             params.append(req.real_name.strip())
+        vehicle_payload = {}
         if req.car_series is not None:
-            updates.append("car_series = ?")
-            params.append(req.car_series.strip())
+            vehicle_payload["car_series"] = req.car_series.strip()
         if req.vin is not None:
-            updates.append("vin = ?")
-            params.append(validate_customer_vin(conn, req.vin, wid))
+            vehicle_payload["vin"] = validate_customer_vin(conn, req.vin, wid)
         if req.purchase_store_name is not None:
-            updates.append("purchase_store_name = ?")
-            params.append(req.purchase_store_name.strip())
+            vehicle_payload["purchase_store_name"] = req.purchase_store_name.strip()
         if req.plate_no is not None:
-            updates.append("plate_no = ?")
-            params.append(req.plate_no.strip())
+            vehicle_payload["plate_no"] = req.plate_no.strip()
 
         if updates:
             params.append(wid)
@@ -1306,7 +1701,167 @@ def update_customer(wid: str, req: UpdateCustomerRequest, request: Request) -> d
                 """,
                 (now_text(), operator, wid, customer.get("phone"), "后台手动修改"),
             )
+        if vehicle_payload:
+            upsert_primary_vehicle(conn, customer, vehicle_payload, source="manual")
         return {"customer": require_customer(conn, wid)}
+
+
+@app.post("/api/customers/{wid}/vehicles")
+def create_customer_vehicle(wid: str, req: CustomerVehicleRequest, request: Request) -> dict:
+    operator = require_role(request, {"admin", "super_admin", "issuer"})
+    with db_session() as conn:
+        customer = require_customer(conn, wid)
+        action, vehicle = upsert_customer_vehicle(conn, customer, req.dict(), source="manual", allow_update=False)
+        conn.execute(
+            """
+            INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
+            VALUES (?, ?, '新增车辆', ?, ?, 1, ?)
+            """,
+            (now_text(), operator, wid, vehicle.get("vin") or vehicle.get("plate_no") or vehicle.get("id"), "后台手动新增车辆"),
+        )
+        payload = customer_payload_with_vehicles(conn, wid)
+        payload["vehicle"] = vehicle
+        payload["action"] = action
+        return payload
+
+
+def cargeer_status_message(status: str) -> str:
+    text = str(status or "").strip()
+    if text == "disabled":
+        return "\u8f66\u5546\u60a6\u67e5\u8be2\u672a\u542f\u7528"
+    if text == "missing_config":
+        return "\u8f66\u5546\u60a6\u8d26\u53f7\u6216\u9a8c\u8bc1\u7801\u914d\u7f6e\u4e0d\u5b8c\u6574"
+    if "Read timed out" in text or "timed out" in text or "Timeout" in text:
+        return "\u8f66\u5546\u60a6\u54cd\u5e94\u8d85\u65f6\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5"
+    if text.startswith("error:"):
+        return "\u8f66\u5546\u60a6\u67e5\u8be2\u5931\u8d25\uff1a" + text.replace("error:", "", 1).strip()
+    return text or "\u8f66\u5546\u60a6\u67e5\u8be2\u5931\u8d25"
+
+
+@app.post("/api/customers/{wid}/vehicles/query-cargeer")
+def query_customer_vehicles_from_cargeer(wid: str, request: Request) -> dict:
+    require_role(request, {"admin", "super_admin", "issuer"})
+    with db_session() as conn:
+        customer = require_customer(conn, wid)
+        phone = (customer.get("phone") or "").strip()
+        if not phone:
+            raise HTTPException(status_code=400, detail="\u8be5\u5ba2\u6237\u6ca1\u6709\u624b\u673a\u53f7\uff0c\u65e0\u6cd5\u67e5\u8be2\u8f66\u5546\u60a6")
+        options, status = lookup_cargeer_options_by_phone(phone)
+        if status != "ok":
+            raise HTTPException(status_code=400, detail=cargeer_status_message(status))
+
+        results = []
+        for index, option in enumerate(options, start=1):
+            vin = normalize_vin(option.get("vin") or "")
+            plate_no = (option.get("plate_no") or "").strip()
+            car_series = (option.get("car_series") or "").strip()
+            purchase_store_name = (option.get("purchase_store_name") or "").strip()
+            if not any([vin, plate_no, car_series, purchase_store_name]):
+                continue
+            results.append({
+                "key": f"cargeer-{index}",
+                "vin": vin,
+                "plate_no": plate_no,
+                "car_series": car_series,
+                "purchase_store_name": purchase_store_name,
+                "source": "cargeer",
+            })
+
+        payload = customer_payload_with_vehicles(conn, wid)
+        payload["options"] = results
+        payload["status"] = status
+        payload["message"] = f"\u8f66\u5546\u60a6\u67e5\u8be2\u5b8c\u6210\uff1a\u627e\u5230 {len(results)} \u6761\u8f66\u8f86\u4fe1\u606f\uff0c\u8bf7\u786e\u8ba4\u540e\u70b9\u51fb\u65b0\u589e\u8f66\u8f86"
+        return payload
+
+
+@app.post("/api/customers/{wid}/vehicles/sync-cargeer")
+def sync_customer_vehicles_from_cargeer(wid: str, request: Request) -> dict:
+    return query_customer_vehicles_from_cargeer(wid, request)
+
+
+@app.patch("/api/customers/{wid}/vehicles/{vehicle_id}")
+def update_customer_vehicle(wid: str, vehicle_id: str, req: CustomerVehicleRequest, request: Request) -> dict:
+    operator = require_role(request, {"admin", "super_admin"})
+    with db_session() as conn:
+        customer = require_customer(conn, wid)
+        vehicle = require_customer_vehicle(conn, wid, vehicle_id)
+        vin = validate_customer_vin(conn, req.vin or "", wid)
+        plate_no = (req.plate_no or "").strip()
+        car_series = (req.car_series or "").strip()
+        purchase_store_name = (req.purchase_store_name or "").strip()
+        if not any([vin, plate_no, car_series, purchase_store_name]):
+            raise HTTPException(status_code=400, detail="\u8bf7\u81f3\u5c11\u586b\u5199\u8f66\u67b6\u53f7\u3001\u8f66\u724c\u53f7\u3001\u8f66\u578b\u6216\u8d2d\u4e70\u95e8\u5e97\u4e4b\u4e00")
+        ensure_vehicle_unique_for_update(conn, wid, vehicle_id, vin, plate_no)
+        conn.execute(
+            """
+            UPDATE customer_vehicles
+            SET phone_snapshot = ?, vin = ?, plate_no = ?, car_series = ?,
+                purchase_store_name = ?, source = 'manual', updated_at = ?
+            WHERE id = ? AND customer_wid = ? AND deleted_at IS NULL
+            """,
+            (customer.get("phone") or "", vin, plate_no, car_series, purchase_store_name, now_text(), vehicle_id, wid),
+        )
+        conn.execute(
+            """
+            INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
+            VALUES (?, ?, '\u4fee\u6539\u8f66\u8f86', ?, ?, 1, ?)
+            """,
+            (now_text(), operator, wid, vin or plate_no or vehicle_id, "\u540e\u53f0\u624b\u52a8\u4fee\u6539\u8f66\u8f86"),
+        )
+        payload = customer_payload_with_vehicles(conn, wid)
+        payload["vehicle"] = row_to_dict(conn.execute("SELECT * FROM customer_vehicles WHERE id = ?", (vehicle_id,)).fetchone())
+        return payload
+
+
+@app.delete("/api/customers/{wid}/vehicles/{vehicle_id}")
+def delete_customer_vehicle(wid: str, vehicle_id: str, request: Request) -> dict:
+    operator = require_role(request, {"admin", "super_admin"})
+    with db_session() as conn:
+        vehicle = require_customer_vehicle(conn, wid, vehicle_id)
+        active_coupon_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM coupons
+            WHERE vehicle_id = ?
+              AND LOWER(COALESCE(status, '')) != 'voided'
+            """,
+            (vehicle_id,),
+        ).fetchone()[0]
+        if active_coupon_count:
+            raise HTTPException(status_code=400, detail="\u8be5\u8f66\u8f86\u8fd8\u6709\u672a\u4f5c\u5e9f\u7684\u5173\u8054\u5238\uff0c\u8bf7\u5148\u5c06\u8fd9\u4e9b\u5238\u5168\u90e8\u4f5c\u5e9f\u540e\u518d\u5220\u9664\u8f66\u8f86")
+        deleted_at = now_text()
+        conn.execute(
+            """
+            UPDATE customer_vehicles
+            SET deleted_at = ?, deleted_by = ?, deleted_reason = ?, updated_at = ?, is_primary = 0
+            WHERE id = ? AND customer_wid = ? AND deleted_at IS NULL
+            """,
+            (deleted_at, operator, "manual_delete", deleted_at, vehicle_id, wid),
+        )
+        if int(vehicle.get("is_primary") or 0):
+            next_vehicle = row_to_dict(
+                conn.execute(
+                    """
+                    SELECT id FROM customer_vehicles
+                    WHERE customer_wid = ? AND deleted_at IS NULL
+                    ORDER BY sort_order ASC, created_at ASC, id ASC
+                    LIMIT 1
+                    """,
+                    (wid,),
+                ).fetchone()
+            )
+            if next_vehicle:
+                conn.execute("UPDATE customer_vehicles SET is_primary = 1, updated_at = ? WHERE id = ?", (now_text(), next_vehicle["id"]))
+        conn.execute(
+            """
+            INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
+            VALUES (?, ?, '\u5220\u9664\u8f66\u8f86', ?, ?, 1, ?)
+            """,
+            (now_text(), operator, wid, vehicle.get("vin") or vehicle.get("plate_no") or vehicle_id, "\u540e\u53f0\u624b\u52a8\u5220\u9664\u8f66\u8f86"),
+        )
+        payload = customer_payload_with_vehicles(conn, wid)
+        payload["deleted_vehicle_id"] = vehicle_id
+        return payload
 
 
 @app.delete("/api/customers/{wid}")
@@ -1408,6 +1963,12 @@ def create_customer(req: CreateCustomerRequest, request: Request) -> dict:
             """,
             tuple(customer.values()),
         )
+        upsert_primary_vehicle(conn, customer, {
+            "vin": vin,
+            "plate_no": req.plate_no,
+            "car_series": req.car_series,
+            "purchase_store_name": req.purchase_store_name,
+        }, source="manual")
         ensure_store(conn, customer["store_name"])
         conn.execute(
             """
@@ -1434,19 +1995,23 @@ def customer_lookup(request: Request, q: str, limit: int = 10, mode: str = "") -
         with db_session() as conn:
             rows = conn.execute(
                 """
-                SELECT wid, phone, nickname, real_name, vin, plate_no, store_name, level_name, member_card,
-                       available_point, total_point, customer_status
-                FROM customers
-                WHERE COALESCE(TRIM(vin), '') != ''
-                  AND deleted_at IS NULL
-                  AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) LIKE ?
+                SELECT c.wid, c.phone, c.nickname, c.real_name, v.vin, v.plate_no,
+                       c.store_name, c.level_name, c.member_card,
+                       c.available_point, c.total_point, c.customer_status,
+                       v.id AS vehicle_id, v.car_series
+                FROM customer_vehicles v
+                JOIN customers c ON c.wid = v.customer_wid
+                WHERE COALESCE(TRIM(v.vin), '') != ''
+                  AND v.deleted_at IS NULL
+                  AND c.deleted_at IS NULL
+                  AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(v.vin, '')), ' ', ''), char(9), ''), char(12288), '')) LIKE ?
                 ORDER BY
                     CASE
-                        WHEN UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ? THEN 0
+                        WHEN UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(v.vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ? THEN 0
                         ELSE 1
                     END,
-                    became_customer_at DESC,
-                    wid DESC
+                    c.became_customer_at DESC,
+                    c.wid DESC
                 LIMIT ?
                 """,
                 (f"%{vin}%", vin, limit),
@@ -1457,28 +2022,33 @@ def customer_lookup(request: Request, q: str, limit: int = 10, mode: str = "") -
     with db_session() as conn:
         rows = conn.execute(
             """
-            SELECT wid, phone, nickname, real_name, vin, plate_no, store_name, level_name, member_card,
-                   available_point, total_point, customer_status
-            FROM customers
-            WHERE deleted_at IS NULL
+            SELECT c.wid, c.phone, c.nickname, c.real_name,
+                   COALESCE(v.vin, c.vin) AS vin,
+                   COALESCE(v.plate_no, c.plate_no) AS plate_no,
+                   c.store_name, c.level_name, c.member_card,
+                   c.available_point, c.total_point, c.customer_status,
+                   v.id AS vehicle_id, COALESCE(v.car_series, c.car_series) AS car_series
+            FROM customers c
+            LEFT JOIN customer_vehicles v ON v.customer_wid = c.wid AND v.deleted_at IS NULL AND v.is_primary = 1
+            WHERE c.deleted_at IS NULL
               AND (
-                   phone LIKE ?
-                OR wid LIKE ?
-                OR nickname LIKE ?
-                OR real_name LIKE ?
-                OR vin LIKE ?
-                OR plate_no LIKE ?
+                   c.phone LIKE ?
+                OR c.wid LIKE ?
+                OR c.nickname LIKE ?
+                OR c.real_name LIKE ?
+                OR v.vin LIKE ?
+                OR v.plate_no LIKE ?
               )
             ORDER BY
                 CASE
-                    WHEN phone = ? THEN 0
-                    WHEN wid = ? THEN 1
-                    WHEN vin = ? THEN 2
-                    WHEN plate_no = ? THEN 3
+                    WHEN c.phone = ? THEN 0
+                    WHEN c.wid = ? THEN 1
+                    WHEN v.vin = ? THEN 2
+                    WHEN v.plate_no = ? THEN 3
                     ELSE 4
                 END,
-                became_customer_at DESC,
-                wid DESC
+                c.became_customer_at DESC,
+                c.wid DESC
             LIMIT ?
             """,
             (
@@ -1868,7 +2438,7 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
     with db_session() as conn:
         admin_profile = current_admin_profile(conn, username)
         operation_store = select_admin_store(admin_profile, req.operation_store_id, req.operation_store_name)
-        customer = require_customer(conn, req.wid)
+        vehicle, customer = require_issue_vehicle(conn, req.vehicle_id, req.vin)
         template = require_template(conn, req.template_id)
         if "续保" in str(template.get("name") or "") and not can_issue_renewal_coupon(admin_profile):
             raise HTTPException(status_code=403, detail="无发送“续保”券权限")
@@ -1902,7 +2472,7 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
             code = f"TX{start:%Y%m%d}{secrets.token_hex(4).upper()}"
             coupon = {
                 "code": code,
-                "customer_wid": req.wid,
+                "customer_wid": customer["wid"],
                 "template_id": template["id"],
                 "template_name": template["name"],
                 "coupon_type": template["coupon_type"],
@@ -1924,6 +2494,8 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
                 "issued_by_user_id": admin_profile.get("user_id"),
                 "issued_by_name": admin_profile.get("name"),
                 "issued_at": issued_at,
+                "vehicle_id": vehicle.get("id"),
+                "vin_snapshot": vehicle.get("vin") or normalize_vin(req.vin),
                 "redeemed_store_id": None,
                 "redeemed_store_name": None,
                 "redeemed_by_user_id": None,
@@ -1947,9 +2519,10 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
                     valid_end, phone, source, remark,
                     usable_store_scope, usable_store_ids, usable_store_names,
                     issued_store_id, issued_store_name, issued_by_user_id, issued_by_name, issued_at,
+                    vehicle_id, vin_snapshot,
                     redeemed_store_id, redeemed_store_name, redeemed_by_user_id, redeemed_by_name, redeemed_at,
                     raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 tuple(coupon.values()),
             )
@@ -1960,7 +2533,7 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
             INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
             VALUES (?, ?, '发券', ?, ?, ?, ?)
             """,
-            (now_text(), req.operator, req.wid, template["name"], req.quantity, req.remark),
+            (now_text(), req.operator, customer["wid"], template["name"], req.quantity, req.remark),
         )
         return {"issued": issued}
 

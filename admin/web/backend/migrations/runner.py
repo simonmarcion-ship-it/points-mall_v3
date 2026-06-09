@@ -23,6 +23,8 @@ MIGRATIONS = [
     Migration("009", "backend.migrations.v009_admin_user_stores"),
     Migration("010", "backend.migrations.v010_admin_renewal_coupon_permission"),
     Migration("011", "backend.migrations.v011_customer_soft_delete"),
+    Migration("012", "backend.migrations.v012_customer_vehicles"),
+    Migration("013", "backend.migrations.v013_backfill_coupon_vehicles"),
 ]
 
 

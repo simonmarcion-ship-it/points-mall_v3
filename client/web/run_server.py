@@ -23,6 +23,7 @@ if __name__ == "__main__":
     load_env_file(str(Path(__file__).resolve().parents[2] / ".env"))
     load_env_file(str(Path(__file__).resolve().parents[3] / ".env"))
     os.environ.setdefault("CLIENT_DB_PATH", r"D:\weimeng_customerinfo\web\data\mall.db")
+    os.environ.setdefault("CLIENT_DEV_BYPASS_SMS_CODE", "00000")
     cargeer_env_file = os.environ.get(
         "CARGEER_ENV_FILE",
         str(Path.home() / "Desktop" / "Projects" / "小天" / "wecom-bot" / ".env"),

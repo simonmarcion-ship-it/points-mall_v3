@@ -3,6 +3,8 @@ let profileRefreshTimer = null;
 let profileRefreshAttempts = 0;
 let smsCountdownTimer = null;
 let triedWechatOAuth = false;
+let currentVehicles = [];
+let selectedVehicleId = "";
 
 function show(view) {
   ["loadingView", "bindView", "profileView", "couponDetailView"].forEach((id) => {
@@ -75,6 +77,40 @@ function renderCoupons(items) {
   bindCouponClicks();
 }
 
+function renderVehicleSelector(vehicles) {
+  currentVehicles = vehicles || [];
+  const wrap = $("vehicleSelectorWrap");
+  const select = $("vehicleSelector");
+  if (!wrap || !select) return;
+  if (!currentVehicles.length) {
+    wrap.classList.add("hidden");
+    select.innerHTML = "";
+    selectedVehicleId = "";
+    return;
+  }
+  if (!selectedVehicleId || !currentVehicles.some((item) => item.id === selectedVehicleId)) {
+    selectedVehicleId = currentVehicles[0].id || "";
+  }
+  select.innerHTML = currentVehicles.map((vehicle, index) => {
+    const label = vehicle.vin || vehicle.plate_no || vehicle.car_series || `车辆 ${index + 1}`;
+    return `<option value="${html(vehicle.id)}" ${vehicle.id === selectedVehicleId ? "selected" : ""}>${html(label)}</option>`;
+  }).join("");
+  wrap.classList.remove("hidden");
+}
+
+async function loadCouponsForSelectedVehicle() {
+  const query = selectedVehicleId ? `?vehicle_id=${encodeURIComponent(selectedVehicleId)}` : "";
+  const coupons = await api(`/api/client/coupons${query}`);
+  renderCoupons(coupons.items || []);
+}
+
+async function changeVehicle() {
+  selectedVehicleId = $("vehicleSelector")?.value || "";
+  await loadCouponsForSelectedVehicle();
+}
+
+window.changeVehicle = changeVehicle;
+
 function renderRules(text) {
   const rules = String(text || "")
     .split(/\n+/)
@@ -118,7 +154,6 @@ async function loadData(showLoading = true) {
   if (showLoading) show("loadingView");
   try {
     const profile = await api("/api/client/me");
-    const coupons = await api("/api/client/coupons");
     const customer = profile.customer;
 
     $("nickname").textContent = safe(customer.nickname || customer.phone || "车主");
@@ -126,7 +161,8 @@ async function loadData(showLoading = true) {
     $("availablePoint").textContent = safe(customer.available_point || "0");
     $("totalPoint").textContent = safe(customer.total_point || "0");
     $("avatar").textContent = String(customer.nickname || customer.phone || "车").slice(0, 1);
-    renderCoupons(coupons.items || []);
+    renderVehicleSelector(profile.vehicles || []);
+    await loadCouponsForSelectedVehicle();
     if (showLoading || ($("couponDetailView").classList.contains("hidden") && $("profileView").classList.contains("hidden"))) {
       show("profileView");
     }

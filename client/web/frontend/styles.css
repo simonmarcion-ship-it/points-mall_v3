@@ -15,6 +15,27 @@ input {
   font: inherit;
 }
 
+.vehicle-selector {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  color: rgba(255,255,255,.78);
+}
+
+.vehicle-selector span {
+  font-size: 12px;
+}
+
+.vehicle-selector select {
+  width: 100%;
+  height: 38px;
+  border: 1px solid rgba(255,255,255,.42);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #1f2937;
+  background: #fff;
+}
+
 .shell {
   width: min(100%, 520px);
   min-height: 100vh;
