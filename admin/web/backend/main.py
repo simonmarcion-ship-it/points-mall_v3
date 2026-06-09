@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 from contextlib import suppress
 from datetime import datetime, timedelta
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
@@ -14,7 +16,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException
 from fastapi import Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import requests
@@ -820,6 +822,23 @@ def active_unused_coupon_sql(alias: str = "") -> str:
 def active_customer_sql(alias: str = "") -> str:
     prefix = f"{alias}." if alias else ""
     return f"{prefix}deleted_at IS NULL"
+
+
+def log_date_range(from_date: str = "", to_date: str = "") -> tuple[str, str]:
+    start = (from_date or "").strip()
+    end = (to_date or "").strip()
+    if not start or not end:
+        raise HTTPException(status_code=400, detail="请选择开始日期和结束日期")
+    try:
+        start_dt = datetime.strptime(start, "%Y-%m-%d")
+        end_dt = datetime.strptime(end, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="日期格式不正确") from exc
+    if end_dt < start_dt:
+        raise HTTPException(status_code=400, detail="结束日期不能早于开始日期")
+    if (end_dt - start_dt).days > 366:
+        raise HTTPException(status_code=400, detail="单次最多导出 366 天")
+    return f"{start} 00:00:00", f"{end} 23:59:59"
 
 
 @app.get("/api/health")
@@ -2126,6 +2145,45 @@ def logs(request: Request, limit: int = 100) -> dict:
                 (*operator_names, limit),
             ).fetchall()
         return {"items": rows_to_dicts(rows)}
+
+
+@app.get("/api/logs/export")
+def export_logs(request: Request, from_date: str = "", to_date: str = "") -> FastAPIResponse:
+    require_role(request, {"admin", "super_admin"})
+    start_text, end_text = log_date_range(from_date, to_date)
+    with db_session() as conn:
+        rows = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT created_at, operator, action, customer_wid, target, quantity, remark
+                FROM operation_logs
+                WHERE created_at >= ? AND created_at <= ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (start_text, end_text),
+            ).fetchall()
+        )
+
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output)
+    writer.writerow(["时间", "操作人", "动作", "客户WID", "对象", "数量", "备注"])
+    for row in rows:
+        writer.writerow([
+            row.get("created_at") or "",
+            row.get("operator") or "",
+            row.get("action") or "",
+            row.get("customer_wid") or "",
+            row.get("target") or "",
+            row.get("quantity") if row.get("quantity") is not None else "",
+            row.get("remark") or "",
+        ])
+    filename = f"operation_logs_{from_date}_{to_date}.csv"
+    return FastAPIResponse(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/wechat/js-sdk-config")

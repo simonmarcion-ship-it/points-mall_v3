@@ -267,6 +267,7 @@ window.startEditCustomerDetail = startEditCustomerDetail;
 window.cancelEditCustomerDetail = cancelEditCustomerDetail;
 window.deleteCustomer = deleteCustomer;
 window.deleteAdminUser = deleteAdminUser;
+window.downloadLogs = downloadLogs;
 window.toggleTemplate = toggleTemplate;
 
 function formatDateTime(value) {
@@ -1853,6 +1854,27 @@ async function loadLogs() {
   `).join('');
 }
 
+function setDefaultLogExportDates() {
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  const text = `${yyyy}-${mm}-${dd}`;
+  if ($('logExportFrom') && !$('logExportFrom').value) $('logExportFrom').value = text;
+  if ($('logExportTo') && !$('logExportTo').value) $('logExportTo').value = text;
+}
+
+function downloadLogs() {
+  const from = $('logExportFrom')?.value || '';
+  const to = $('logExportTo')?.value || '';
+  if (!from || !to) {
+    alert('请选择开始日期和结束日期');
+    return;
+  }
+  const params = new URLSearchParams({ from_date: from, to_date: to });
+  window.location.href = ADMIN_BASE + '/api/logs/export?' + params.toString();
+}
+
 document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListener('click', () => {
   if (btn.classList.contains('hidden')) return;
   document.querySelectorAll('.sidebar button').forEach((item) => item.classList.remove('active'));
@@ -1861,7 +1883,10 @@ document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListen
   $('view-' + btn.dataset.view).classList.remove('hidden');
   if (btn.dataset.view === 'stores') loadStoreMaintenance();
   if (btn.dataset.view === 'admin-users') loadAdminUsers();
-  if (btn.dataset.view === 'logs') loadLogs();
+  if (btn.dataset.view === 'logs') {
+    setDefaultLogExportDates();
+    loadLogs();
+  }
 }));
 
 document.addEventListener('click', (event) => {

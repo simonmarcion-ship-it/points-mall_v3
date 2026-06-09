@@ -306,7 +306,15 @@
 
       <section id="view-logs" class="view hidden">
         <div class="panel">
-          <div class="panel-head"><div class="panel-title">操作记录</div><button class="secondary" onclick="loadLogs()">刷新</button></div>
+          <div class="panel-head">
+            <div class="panel-title">操作记录</div>
+            <div class="toolbar compact">
+              <label data-permission="can_admin_users">开始<input id="logExportFrom" type="date" /></label>
+              <label data-permission="can_admin_users">结束<input id="logExportTo" type="date" /></label>
+              <button class="secondary" data-permission="can_admin_users" onclick="downloadLogs()">下载</button>
+              <button class="secondary" onclick="loadLogs()">刷新</button>
+            </div>
+          </div>
           <div class="panel-body table-wrap">
             <table><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>wid</th><th>对象</th><th>数量</th><th>备注</th></tr></thead><tbody id="logRows"></tbody></table>
           </div>
@@ -320,6 +328,6 @@
     <button type="button" class="danger" data-permission="can_void" onclick="confirmContextCouponVoid()">作废</button>
   </div>
   <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-  <script src="assets/app.js?v=20260607-customer-deleted-filter"></script>
+  <script src="assets/app.js?v=20260609-log-export"></script>
 </body>
 </html>

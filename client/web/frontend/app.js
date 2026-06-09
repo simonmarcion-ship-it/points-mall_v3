@@ -96,7 +96,11 @@ async function openCouponDetail(code) {
     $("detailName").textContent = safe(coupon.template_name);
     $("detailPeriod").textContent = safe(coupon.valid_period || [coupon.valid_start, coupon.valid_end].filter(Boolean).join(" 至 "));
     $("detailCode").textContent = safe(coupon.code).replace(/(.{4})/g, "$1 ").trim();
-    $("qrCode").innerHTML = `<img src="/api/client/coupons/${encodeURIComponent(coupon.code)}/qr" alt="券码二维码" />`;
+    if (coupon.status === "unused") {
+      $("qrCode").innerHTML = `<img src="/api/client/coupons/${encodeURIComponent(coupon.code)}/qr" alt="券码二维码" />`;
+    } else {
+      $("qrCode").innerHTML = `<div class="coupon-unavailable">${html(statusText(coupon.status, coupon.status_text))}</div>`;
+    }
     $("detailStoreScope").textContent = safe(coupon.scope_text || coupon.usable_store_names);
     $("detailProductScope").textContent = safe(coupon.validity_text || coupon.valid_period || [coupon.valid_start, coupon.valid_end].filter(Boolean).join(" 至 "));
     renderRules(coupon.rule_text);
