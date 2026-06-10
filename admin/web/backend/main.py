@@ -826,6 +826,7 @@ def role_permissions(role: str) -> dict:
         "can_promote_admin": is_super_admin,
         "can_issue": is_admin or role == "issuer",
         "can_create_customer": is_admin or role == "issuer",
+        "can_edit_customer": is_admin or role == "issuer",
         "can_void": is_admin or role == "issuer",
         "can_redeem": is_admin or role == "redeemer",
         "can_manage_templates": is_admin,

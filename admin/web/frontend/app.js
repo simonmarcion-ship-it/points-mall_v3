@@ -565,7 +565,7 @@ function renderCustomerDetail(c) {
         <div class="key">删除人</div><div>${safe(c.deleted_by)}</div>
         <div class="key">删除原因</div><div>${safe(c.deleted_reason)}</div>`
     : '';
-  if (can('can_create_customer') && !c.deleted_at) {
+  if (can('can_edit_customer') && !c.deleted_at) {
     const storeOptions = Array.from($('newCustomerStore').options)
       .filter((option) => option.value)
       .map((option) => `<option value="${html(option.value)}" ${option.value === c.store_name ? 'selected' : ''}>${html(option.textContent)}</option>`)
