@@ -126,6 +126,12 @@ class UpdateCustomerRequest(BaseModel):
     plate_no: str | None = None
 
 
+class UpdateCustomerPointsRequest(BaseModel):
+    available_point: str = ""
+    total_point: str = ""
+    frozen_point: str = ""
+
+
 class DeleteCustomerRequest(BaseModel):
     reason: str = ""
 
@@ -1705,6 +1711,38 @@ def update_customer(wid: str, req: UpdateCustomerRequest, request: Request) -> d
         if vehicle_payload:
             upsert_primary_vehicle(conn, customer, vehicle_payload, source="manual")
         return {"customer": require_customer(conn, wid)}
+
+
+@app.patch("/api/customers/{wid}/points")
+def update_customer_points(wid: str, req: UpdateCustomerPointsRequest, request: Request) -> dict:
+    operator = require_login(request)
+    with db_session() as conn:
+        customer = require_customer(conn, wid)
+        available_point = req.available_point.strip()
+        total_point = req.total_point.strip()
+        frozen_point = req.frozen_point.strip()
+        old_points = (
+            f"可用 {customer.get('available_point') or '0'}，"
+            f"累计 {customer.get('total_point') or '0'}，"
+            f"冻结 {customer.get('frozen_point') or '0'}"
+        )
+        new_points = f"可用 {available_point or '0'}，累计 {total_point or '0'}，冻结 {frozen_point or '0'}"
+        conn.execute(
+            """
+            UPDATE customers
+            SET available_point = ?, total_point = ?, frozen_point = ?
+            WHERE wid = ?
+            """,
+            (available_point, total_point, frozen_point, wid),
+        )
+        conn.execute(
+            """
+            INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
+            VALUES (?, ?, '修改客户积分', ?, ?, 1, ?)
+            """,
+            (now_text(), operator, wid, customer.get("phone"), f"{old_points} -> {new_points}"),
+        )
+        return {"customer": customer_with_primary_vehicle(conn, require_customer(conn, wid))}
 
 
 @app.post("/api/customers/{wid}/vehicles")

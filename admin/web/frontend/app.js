@@ -288,6 +288,7 @@ window.sendRegisterSmsCode = sendRegisterSmsCode;
 window.selectIssueTemplate = selectIssueTemplate;
 window.startEditCustomerDetail = startEditCustomerDetail;
 window.cancelEditCustomerDetail = cancelEditCustomerDetail;
+window.saveCustomerPoints = saveCustomerPoints;
 window.deleteCustomer = deleteCustomer;
 window.deleteAdminUser = deleteAdminUser;
 window.downloadLogs = downloadLogs;
@@ -565,6 +566,18 @@ function renderCustomerDetail(c) {
         <div class="key">删除人</div><div>${safe(c.deleted_by)}</div>
         <div class="key">删除原因</div><div>${safe(c.deleted_reason)}</div>`
     : '';
+  const pointsHtml = `
+    <div class="points-section">
+      <h3>客户积分</h3>
+      <div class="points-grid">
+        <label>可用积分<input id="editAvailablePoint" value="${html(c.available_point)}" ${c.deleted_at ? 'readonly' : ''} inputmode="decimal" /></label>
+        <label>累计积分<input id="editTotalPoint" value="${html(c.total_point)}" ${c.deleted_at ? 'readonly' : ''} inputmode="decimal" /></label>
+        <label>冻结积分<input id="editFrozenPoint" value="${html(c.frozen_point)}" ${c.deleted_at ? 'readonly' : ''} inputmode="decimal" /></label>
+        ${c.deleted_at ? '' : '<button type="button" onclick="saveCustomerPoints()">保存积分</button>'}
+      </div>
+      <p id="editPointsMessage" class="message"></p>
+    </div>
+  `;
   if (can('can_edit_customer') && !c.deleted_at) {
     const storeOptions = Array.from($('newCustomerStore').options)
       .filter((option) => option.value)
@@ -591,6 +604,7 @@ function renderCustomerDetail(c) {
         <div class="key">&#40657;&#21517;&#21333;</div><div>${formatBool(c.black_user)}</div>
         ${deletedInfo}
       </div>
+      ${pointsHtml}
       <div id="customerEditDetail" class="hidden">
         <div class="form-grid">
           <label>客户编号<input id="editCustomerWid" value="${html(c.wid)}" readonly /></label>
@@ -633,6 +647,7 @@ function renderCustomerDetail(c) {
     <div class="key">&#40657;&#21517;&#21333;</div><div>${formatBool(c.black_user)}</div>
     ${deletedInfo}
   </div>
+  ${pointsHtml}
   <div class="vehicle-section">
     <h3>车辆信息</h3>
     ${vehicleControlsHtml}
@@ -835,6 +850,30 @@ async function saveCustomerDetail() {
     if (primaryVehicle?.vin) {
       fillIssueCustomer({ ...data.customer, ...primaryVehicle, vehicle_id: primaryVehicle.id });
     }
+    await searchCustomers(false);
+  } catch (err) {
+    msg.className = 'message error';
+    msg.textContent = err.message;
+  }
+}
+
+async function saveCustomerPoints() {
+  if (!selectedWid) return;
+  const msg = $('editPointsMessage');
+  msg.className = 'message';
+  msg.textContent = '保存中...';
+  try {
+    const data = await api('/api/customers/' + encodeURIComponent(selectedWid) + '/points', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        available_point: $('editAvailablePoint').value,
+        total_point: $('editTotalPoint').value,
+        frozen_point: $('editFrozenPoint').value,
+      }),
+    });
+    selectedCustomerDetail = data.customer;
+    msg.className = 'message ok';
+    msg.textContent = '客户积分已保存';
     await searchCustomers(false);
   } catch (err) {
     msg.className = 'message error';

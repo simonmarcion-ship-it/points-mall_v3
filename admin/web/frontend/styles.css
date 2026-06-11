@@ -78,6 +78,10 @@ tr.muted-row td { color: #98a2b3; }
 .coupon-detail-grid { grid-template-columns: 110px minmax(0, 1fr); }
 .preline { white-space: pre-line; }
 .customer-detail-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.points-section { margin-top: 16px; padding: 12px; border: 1px solid #dfe5ef; border-radius: 8px; background: #f8fafc; }
+.points-section h3 { margin: 0 0 12px; font-size: 15px; }
+.points-grid { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)) auto; gap: 12px; align-items: end; }
+.points-grid button { height: 38px; }
 .tag { display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12px; background: #eef2f7; color: #344054; }
 .tag.unused { background: #ecfdf3; color: #027a48; }
 .tag.used { background: #eff4ff; color: #175cd3; }
@@ -164,7 +168,7 @@ label.wide { grid-column: span 2; }
   .toolbar { width: 100%; display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
   .toolbar input, .toolbar select { width: 100%; }
   .toolbar.compact { display: flex; }
-  .detail-grid, .two-column-layout, .coupon-workspace, .form-grid, .filter-grid, .lookup-item, .lookup-item-vehicle, .store-maintenance-form, .store-picker-grid { grid-template-columns: 1fr; }
+  .detail-grid, .two-column-layout, .coupon-workspace, .form-grid, .filter-grid, .lookup-item, .lookup-item-vehicle, .store-maintenance-form, .store-picker-grid, .points-grid { grid-template-columns: 1fr; }
   .form-grid { gap: 10px; }
   label.wide { grid-column: span 1; }
   .wide { grid-column: span 1; }
