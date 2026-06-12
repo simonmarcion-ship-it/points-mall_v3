@@ -1820,7 +1820,7 @@ def sync_customer_vehicles_from_cargeer(wid: str, request: Request) -> dict:
 
 @app.patch("/api/customers/{wid}/vehicles/{vehicle_id}")
 def update_customer_vehicle(wid: str, vehicle_id: str, req: CustomerVehicleRequest, request: Request) -> dict:
-    operator = require_role(request, {"admin", "super_admin"})
+    operator = require_role(request, {"admin", "super_admin", "issuer"})
     with db_session() as conn:
         customer = require_customer(conn, wid)
         vehicle = require_customer_vehicle(conn, wid, vehicle_id)
@@ -1854,7 +1854,7 @@ def update_customer_vehicle(wid: str, vehicle_id: str, req: CustomerVehicleReque
 
 @app.delete("/api/customers/{wid}/vehicles/{vehicle_id}")
 def delete_customer_vehicle(wid: str, vehicle_id: str, request: Request) -> dict:
-    operator = require_role(request, {"admin", "super_admin"})
+    operator = require_role(request, {"admin", "super_admin", "issuer"})
     with db_session() as conn:
         vehicle = require_customer_vehicle(conn, wid, vehicle_id)
         active_coupon_count = conn.execute(

@@ -478,7 +478,7 @@ async function selectCustomer(wid) {
 
 function renderCustomerDetail(c) {
   const vehicles = selectedCustomerVehicles || [];
-  const canManageVehicles = can('can_admin_users') && !c.deleted_at;
+  const canManageVehicles = can('can_edit_customer') && !c.deleted_at;
   const vehicleHtml = vehicles.length
     ? vehicles.map((v, index) => {
       const editing = editingVehicleId === v.id;
