@@ -1109,7 +1109,7 @@ def parse_datetime(value: str | None) -> datetime | None:
         return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
     except ValueError:
         pass
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y.%m.%d"):
         try:
             return datetime.strptime(text, fmt)
         except ValueError:
@@ -1120,12 +1120,18 @@ def parse_datetime(value: str | None) -> datetime | None:
 def apply_dynamic_coupon_status(coupon: dict) -> dict:
     if not coupon:
         return coupon
-    if coupon.get("status") == "unused":
-        valid_end = parse_datetime(coupon.get("valid_end"))
-        if valid_end and valid_end < datetime.now(APP_TZ).replace(tzinfo=None):
+    status = str(coupon.get("status") or "").lower()
+    valid_end = parse_datetime(coupon.get("valid_end"))
+    if valid_end:
+        now = datetime.now(APP_TZ).replace(tzinfo=None)
+        if status == "unused" and valid_end < now:
             coupon = dict(coupon)
             coupon["status"] = "expired"
-            coupon["status_text"] = "已过期"
+            coupon["status_text"] = "\u5df2\u8fc7\u671f"
+        elif status == "expired" and valid_end >= now:
+            coupon = dict(coupon)
+            coupon["status"] = "unused"
+            coupon["status_text"] = "\u672a\u4f7f\u7528"
     return coupon
 
 
@@ -1151,18 +1157,35 @@ def public_coupon_row(coupon: dict) -> dict:
 
 
 def expire_coupons_once() -> int:
+    now = datetime.now(APP_TZ).replace(tzinfo=None)
+    changed = 0
     with db_session() as conn:
-        cursor = conn.execute(
+        rows = rows_to_dicts(conn.execute(
             """
-            UPDATE coupons
-            SET status = 'expired', status_text = '已过期'
-            WHERE status = 'unused'
+            SELECT code, status, valid_end
+            FROM coupons
+            WHERE status IN ('unused', 'expired')
               AND valid_end IS NOT NULL
               AND valid_end != ''
-              AND datetime(valid_end) < datetime('now', 'localtime')
             """
-        )
-        return cursor.rowcount or 0
+        ).fetchall())
+        for row in rows:
+            valid_end = parse_datetime(row.get("valid_end"))
+            if not valid_end:
+                continue
+            if row.get("status") == "unused" and valid_end < now:
+                conn.execute(
+                    "UPDATE coupons SET status = 'expired', status_text = ? WHERE code = ?",
+                    ("\u5df2\u8fc7\u671f", row["code"]),
+                )
+                changed += 1
+            elif row.get("status") == "expired" and valid_end >= now:
+                conn.execute(
+                    "UPDATE coupons SET status = 'unused', status_text = ? WHERE code = ?",
+                    ("\u672a\u4f7f\u7528", row["code"]),
+                )
+                changed += 1
+        return changed
 
 
 def seconds_until_next_expiry_run() -> float:
@@ -1203,7 +1226,11 @@ def active_unused_coupon_sql(alias: str = "") -> str:
     return f"""
         {prefix}status = 'unused'
         AND COALESCE({prefix}status_text, '') IN ('', '未使用', '可用')
-        AND ({prefix}valid_end IS NULL OR {prefix}valid_end = '' OR datetime({prefix}valid_end) >= datetime('now', 'localtime'))
+        AND (
+            {prefix}valid_end IS NULL
+            OR {prefix}valid_end = ''
+            OR COALESCE(datetime(REPLACE({prefix}valid_end, '.', '-')), datetime({prefix}valid_end)) >= datetime('now', 'localtime')
+        )
     """
 
 

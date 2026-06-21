@@ -364,11 +364,31 @@ function statusTag(status, text) {
   return `<span class="tag ${status}">${safe(text || status)}</span>`;
 }
 
+function parseCouponDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const match = text.match(/^(\d{4})[-.](\d{1,2})[-.](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (match) {
+    const [, year, month, day, hour = '0', minute = '0', second = '0'] = match;
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+    );
+  }
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function normalizeCouponStatus(row) {
   const status = String(row.status || '').toLowerCase();
   const text = String(row.status_text || '');
-  const validEnd = row.valid_end ? new Date(row.valid_end) : null;
+  const validEnd = parseCouponDate(row.valid_end);
   if (status === 'used' || text.includes('已使用') || text.includes('已核销') || text === '使用') return 'used';
+  if ((status === 'expired' || text.includes('过期')) && validEnd && validEnd >= new Date()) return 'unused';
   if (status === 'expired' || text.includes('过期')) return 'expired';
   if (status === 'voided' || text.includes('作废') || text.includes('失效')) return 'voided';
   if (validEnd && !Number.isNaN(validEnd.getTime()) && validEnd < new Date()) return 'expired';
