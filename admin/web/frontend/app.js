@@ -367,6 +367,10 @@ function statusTag(status, text) {
 function parseCouponDate(value) {
   const text = String(value || '').trim();
   if (!text) return null;
+  if (/^\d{10}$|^\d{13}$/.test(text)) {
+    const timestamp = Number(text);
+    return new Date(text.length === 13 ? timestamp : timestamp * 1000);
+  }
   const match = text.match(/^(\d{4})[-.](\d{1,2})[-.](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
   if (match) {
     const [, year, month, day, hour = '0', minute = '0', second = '0'] = match;

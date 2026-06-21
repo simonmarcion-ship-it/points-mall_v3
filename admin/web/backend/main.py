@@ -1103,6 +1103,11 @@ def parse_datetime(value: str | None) -> datetime | None:
     text = str(value).strip()
     if not text:
         return None
+    if re.fullmatch(r"\d{10}|\d{13}", text):
+        timestamp = int(text)
+        if len(text) == 13:
+            timestamp = timestamp / 1000
+        return datetime.fromtimestamp(timestamp, APP_TZ).replace(tzinfo=None)
     normalized = text.replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(normalized)
@@ -1245,6 +1250,14 @@ def active_unused_coupon_sql(alias: str = "") -> str:
         AND (
             {prefix}valid_end IS NULL
             OR {prefix}valid_end = ''
+            OR (
+                {prefix}valid_end GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+                AND datetime(CAST({prefix}valid_end AS INTEGER) / 1000, 'unixepoch', 'localtime') >= datetime('now', 'localtime')
+            )
+            OR (
+                {prefix}valid_end GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+                AND datetime(CAST({prefix}valid_end AS INTEGER), 'unixepoch', 'localtime') >= datetime('now', 'localtime')
+            )
             OR COALESCE(datetime(REPLACE({prefix}valid_end, '.', '-')), datetime({prefix}valid_end)) >= datetime('now', 'localtime')
         )
     """
