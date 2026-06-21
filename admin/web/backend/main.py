@@ -1117,11 +1117,25 @@ def parse_datetime(value: str | None) -> datetime | None:
     return None
 
 
+def coupon_valid_end(coupon: dict) -> datetime | None:
+    valid_end = parse_datetime(coupon.get("valid_end"))
+    if valid_end:
+        return valid_end
+    period = str(coupon.get("valid_period") or "").strip()
+    if not period or period == "\u6c38\u4e45\u6709\u6548":
+        return None
+    for separator in ("~", "\uff5e", "\u81f3"):
+        if separator in period:
+            end_text = period.rsplit(separator, 1)[-1].strip()
+            return parse_datetime(end_text)
+    return parse_datetime(period)
+
+
 def apply_dynamic_coupon_status(coupon: dict) -> dict:
     if not coupon:
         return coupon
     status = str(coupon.get("status") or "").lower()
-    valid_end = parse_datetime(coupon.get("valid_end"))
+    valid_end = coupon_valid_end(coupon)
     if valid_end:
         now = datetime.now(APP_TZ).replace(tzinfo=None)
         if status == "unused" and valid_end < now:
@@ -1162,15 +1176,17 @@ def expire_coupons_once() -> int:
     with db_session() as conn:
         rows = rows_to_dicts(conn.execute(
             """
-            SELECT code, status, valid_end
+            SELECT code, status, valid_end, valid_period
             FROM coupons
             WHERE status IN ('unused', 'expired')
-              AND valid_end IS NOT NULL
-              AND valid_end != ''
+              AND (
+                (valid_end IS NOT NULL AND valid_end != '')
+                OR (valid_period IS NOT NULL AND valid_period != '')
+              )
             """
         ).fetchall())
         for row in rows:
-            valid_end = parse_datetime(row.get("valid_end"))
+            valid_end = coupon_valid_end(row)
             if not valid_end:
                 continue
             if row.get("status") == "unused" and valid_end < now:

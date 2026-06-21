@@ -383,10 +383,23 @@ function parseCouponDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function couponValidEnd(row) {
+  const validEnd = parseCouponDate(row.valid_end);
+  if (validEnd) return validEnd;
+  const period = String(row.valid_period || '').trim();
+  if (!period || period === '永久有效') return null;
+  for (const separator of ['~', '～', '至']) {
+    if (period.includes(separator)) {
+      return parseCouponDate(period.split(separator).pop());
+    }
+  }
+  return parseCouponDate(period);
+}
+
 function normalizeCouponStatus(row) {
   const status = String(row.status || '').toLowerCase();
   const text = String(row.status_text || '');
-  const validEnd = parseCouponDate(row.valid_end);
+  const validEnd = couponValidEnd(row);
   if (status === 'used' || text.includes('已使用') || text.includes('已核销') || text === '使用') return 'used';
   if ((status === 'expired' || text.includes('过期')) && validEnd && validEnd >= new Date()) return 'unused';
   if (status === 'expired' || text.includes('过期')) return 'expired';
