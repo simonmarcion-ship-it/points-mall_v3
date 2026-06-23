@@ -1979,6 +1979,14 @@ def delete_customer(wid: str, req: DeleteCustomerRequest, request: Request) -> d
         )
         conn.execute(
             """
+            UPDATE customer_vehicles
+            SET deleted_at = ?, deleted_by = ?, deleted_reason = ?, updated_at = ?, is_primary = 0
+            WHERE customer_wid = ? AND deleted_at IS NULL
+            """,
+            (deleted_at, operator, "customer_deleted", deleted_at, wid),
+        )
+        conn.execute(
+            """
             INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
             VALUES (?, ?, '删除客户', ?, ?, 1, ?)
             """,
