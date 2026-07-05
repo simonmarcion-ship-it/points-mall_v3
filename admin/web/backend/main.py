@@ -827,8 +827,10 @@ def role_permissions(role: str) -> dict:
     role = role or "issuer"
     is_super_admin = role == "super_admin"
     is_admin = role in {"super_admin", "admin"}
+    is_record_viewer = role == "record_viewer"
     return {
         "can_admin_users": is_admin,
+        "can_view_coupon_records": is_admin or is_record_viewer,
         "can_promote_admin": is_super_admin,
         "can_issue": is_admin or role == "issuer",
         "can_create_customer": is_admin or role == "issuer",
@@ -2229,7 +2231,7 @@ def admin_users(request: Request) -> dict:
 @app.post("/api/admin-users")
 def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
     require_role(request, {"admin", "super_admin"})
-    allowed_roles = {"issuer", "redeemer"}
+    allowed_roles = {"issuer", "redeemer", "record_viewer"}
     try:
         phone = normalize_phone(req.phone)
     except SmsError as exc:
@@ -2239,7 +2241,7 @@ def create_admin_user(req: CreateAdminUserRequest, request: Request) -> dict:
     if not name:
         raise HTTPException(status_code=400, detail="请输入姓名")
     if role not in allowed_roles:
-        raise HTTPException(status_code=400, detail="只能新增发券人员或核销人员")
+        raise HTTPException(status_code=400, detail="只能新增发券人员、核销人员或记录查看员")
 
     with db_session() as conn:
         store = row_to_dict(
@@ -2344,7 +2346,7 @@ def update_admin_user(user_id: str, req: UpdateAdminUserRequest, request: Reques
     username = require_role(request, {"admin", "super_admin"})
     with db_session() as conn:
         operator_role = admin_role(conn, username)
-        allowed_roles = {"issuer", "redeemer", "admin"} if operator_role == "super_admin" else {"issuer", "redeemer"}
+        allowed_roles = {"issuer", "redeemer", "record_viewer", "admin"} if operator_role == "super_admin" else {"issuer", "redeemer", "record_viewer"}
         user = row_to_dict(conn.execute("SELECT * FROM admin_users WHERE id = ?", (user_id,)).fetchone())
         if not user:
             raise HTTPException(status_code=404, detail="人员不存在")
@@ -2959,7 +2961,7 @@ def coupon_records(
     page: int = 1,
     page_size: int = 50,
 ) -> dict:
-    require_role(request, {"admin", "super_admin"})
+    require_role(request, {"admin", "super_admin", "record_viewer"})
     page = max(1, page)
     page_size = max(1, min(page_size, 200))
     offset = (page - 1) * page_size
@@ -2990,7 +2992,7 @@ def coupon_records(
 
 @app.get("/api/coupon-records/export")
 def export_coupon_records(request: Request, from_date: str = "", to_date: str = "") -> FastAPIResponse:
-    require_role(request, {"admin", "super_admin"})
+    require_role(request, {"admin", "super_admin", "record_viewer"})
     start_text, end_text = log_date_range(from_date, to_date)
     where_sql, params = coupon_record_where(from_date, to_date)
     with db_session() as conn:

@@ -127,6 +127,7 @@ function roleLabel(role) {
     admin: '管理员',
     issuer: '发券人员',
     redeemer: '核销人员',
+    record_viewer: '记录查看员',
     staff: '发券人员',
   }[role] || role || '-';
 }
@@ -494,6 +495,10 @@ async function resetCustomerFilters() {
 }
 
 async function selectCustomer(wid) {
+  if (!wid) {
+    showCustomerList({ keepScroll: false });
+    return;
+  }
   selectedWid = wid;
   const openingFromList = !$('customerListPanel').classList.contains('hidden');
   if (openingFromList) {
@@ -1104,9 +1109,19 @@ async function confirmContextCouponVoid() {
 }
 
 function backToCustomerList() {
+  showCustomerList({ keepScroll: true });
+}
+
+function showCustomerList({ keepScroll = true } = {}) {
+  selectedWid = '';
+  selectedCustomerDetail = null;
+  selectedCustomerCoupons = [];
+  selectedCustomerVehicles = [];
   $('customerDetailPanel').classList.add('hidden');
   $('customerListPanel').classList.remove('hidden');
-  requestAnimationFrame(() => window.scrollTo({ top: customerListScrollY, left: 0, behavior: 'auto' }));
+  if (keepScroll) {
+    requestAnimationFrame(() => window.scrollTo({ top: customerListScrollY, left: 0, behavior: 'auto' }));
+  }
 }
 
 function fillIssueCustomer(customer) {
@@ -1511,10 +1526,11 @@ async function loadAdminUsers() {
         <select onchange="updateAdminUserRole('${safe(row.id)}', this.value)">
           <option value="issuer" ${row.role === 'issuer' || row.role === 'staff' ? 'selected' : ''}>发券人员</option>
           <option value="redeemer" ${row.role === 'redeemer' ? 'selected' : ''}>核销人员</option>
+          <option value="record_viewer" ${row.role === 'record_viewer' ? 'selected' : ''}>记录查看员</option>
           ${canPromoteAdmin ? `<option value="admin" ${row.role === 'admin' ? 'selected' : ''}>管理员</option>` : ''}
         </select>`;
     const canEditRenewal = !deleted && (row.role === 'issuer' || row.role === 'staff' || (row.role === 'admin' && canPromoteAdmin));
-    const renewalHtml = row.role === 'redeemer'
+    const renewalHtml = ['redeemer', 'record_viewer'].includes(row.role)
       ? '<span class="tag">不适用</span>'
       : row.role === 'super_admin'
       ? '<span class="tag used">是</span>'
@@ -2273,31 +2289,45 @@ function couponRecordQueryParams() {
 async function loadCouponRecords(resetPage = false) {
   if (resetPage) couponRecordPage = 1;
   const { params, pageSize } = couponRecordQueryParams();
-  const data = await api('/api/coupon-records?' + params.toString());
-  couponRecordTotal = data.total || 0;
-  $('couponRecordRows').innerHTML = data.items.map((row) => `
-    <tr>
-      <td>${safe(row.code)}</td>
-      <td>${safe(row.template_name)}</td>
-      <td>${safe(row.coupon_type)}</td>
-      <td>${safe(row.customer_name)}</td>
-      <td>${safe(row.customer_phone)}</td>
-      <td>${safe(row.vin)}</td>
-      <td>${safe(row.issued_at || row.receive_time)}</td>
-      <td>${safe(row.issued_store_name)}</td>
-      <td>${safe(row.issued_by_name)}</td>
-      <td>${safe(row.usable_store_names)}</td>
-      <td>${safe(row.redeemed_store_name)}</td>
-      <td>${safe(row.redeemed_by_name)}</td>
-      <td>${safe(row.redeemed_at || row.used_time)}</td>
-    </tr>
-  `).join('');
-  const totalPages = Math.max(1, Math.ceil(couponRecordTotal / pageSize));
-  if ($('couponRecordPageInfo')) $('couponRecordPageInfo').textContent = `第 ${couponRecordPage} / ${totalPages} 页，共 ${couponRecordTotal} 条记录`;
-  if ($('couponRecordPrevPage')) $('couponRecordPrevPage').disabled = couponRecordPage <= 1;
-  if ($('couponRecordNextPage')) $('couponRecordNextPage').disabled = couponRecordPage >= totalPages;
+  const controls = document.querySelectorAll('#view-coupon-records button, #view-coupon-records select, #view-coupon-records input');
+  controls.forEach((el) => { el.disabled = true; });
+  if ($('couponRecordRows')) {
+    $('couponRecordRows').innerHTML = '<tr><td colspan="13" class="subtle">正在加载卡券记录...</td></tr>';
+  }
+  if ($('couponRecordPageInfo')) $('couponRecordPageInfo').textContent = '正在查询...';
+  try {
+    const data = await api('/api/coupon-records?' + params.toString());
+    couponRecordTotal = data.total || 0;
+    $('couponRecordRows').innerHTML = data.items.length ? data.items.map((row) => `
+      <tr>
+        <td>${safe(row.code)}</td>
+        <td>${safe(row.template_name)}</td>
+        <td>${safe(row.coupon_type)}</td>
+        <td>${safe(row.customer_name)}</td>
+        <td>${safe(row.customer_phone)}</td>
+        <td>${safe(row.vin)}</td>
+        <td>${safe(row.issued_at || row.receive_time)}</td>
+        <td>${safe(row.issued_store_name)}</td>
+        <td>${safe(row.issued_by_name)}</td>
+        <td>${safe(row.usable_store_names)}</td>
+        <td>${safe(row.redeemed_store_name)}</td>
+        <td>${safe(row.redeemed_by_name)}</td>
+        <td>${safe(row.redeemed_at || row.used_time)}</td>
+      </tr>
+    `).join('') : '<tr><td colspan="13" class="subtle">暂无卡券记录</td></tr>';
+    const totalPages = Math.max(1, Math.ceil(couponRecordTotal / pageSize));
+    if ($('couponRecordPageInfo')) $('couponRecordPageInfo').textContent = `第 ${couponRecordPage} / ${totalPages} 页，共 ${couponRecordTotal} 条记录`;
+    if ($('couponRecordPrevPage')) $('couponRecordPrevPage').disabled = couponRecordPage <= 1;
+    if ($('couponRecordNextPage')) $('couponRecordNextPage').disabled = couponRecordPage >= totalPages;
+  } catch (err) {
+    if ($('couponRecordRows')) {
+      $('couponRecordRows').innerHTML = `<tr><td colspan="13" class="message error">${html(err.message || '查询失败')}</td></tr>`;
+    }
+    if ($('couponRecordPageInfo')) $('couponRecordPageInfo').textContent = '查询失败';
+  } finally {
+    controls.forEach((el) => { el.disabled = false; });
+  }
 }
-
 async function changeCouponRecordPage(step) {
   const pageSize = Number($('couponRecordPageSize')?.value || 50);
   const totalPages = Math.max(1, Math.ceil(couponRecordTotal / pageSize));
@@ -2349,6 +2379,7 @@ document.addEventListener('click', (event) => {
 
 async function bootstrapApp() {
   applyPermissions();
+  showCustomerList({ keepScroll: false });
   await loadSummary();
   await loadStores();
   await loadTemplates();
