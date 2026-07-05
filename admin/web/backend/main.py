@@ -1707,7 +1707,8 @@ def customer_detail(wid: str, request: Request) -> dict:
                        ct.rule_text AS rule_text
                 FROM coupons cp
                 LEFT JOIN coupon_templates ct ON ct.id = cp.template_id
-                            WHERE cp.customer_wid = ?
+                LEFT JOIN customer_vehicles v ON v.id = cp.vehicle_id
+                WHERE cp.customer_wid = ?
                 ORDER BY cp.receive_time DESC, cp.code DESC
                 """,
                 (wid,),
