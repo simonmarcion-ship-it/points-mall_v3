@@ -510,7 +510,7 @@ async function selectCustomer(wid) {
   }
   $('issueWid').value = wid;
   $('couponStatusFilter').value = '';
-  $('customerListPanel').classList.add('hidden');
+  $('customerListPanel').classList.remove('hidden');
   $('customerDetailPanel').classList.remove('hidden');
   if (openingFromList) scrollWindowTop();
   const data = await api('/api/customers/' + encodeURIComponent(wid));
