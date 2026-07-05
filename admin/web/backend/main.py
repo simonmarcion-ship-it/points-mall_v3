@@ -3068,6 +3068,7 @@ def wechat_js_sdk_config(request: Request, url: str) -> dict:
     }
 
 
+app.mount("/admin/assets", StaticFiles(directory=FRONTEND_DIR), name="admin-assets")
 app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
 
 
