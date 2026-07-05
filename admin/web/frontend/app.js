@@ -449,6 +449,10 @@ function customerQueryParams() {
 
 async function searchCustomers(resetPage = true) {
   if (resetPage) customerPage = 1;
+  if ($('customerListPanel') && $('customerDetailPanel')) {
+    $('customerDetailPanel').classList.add('hidden');
+    $('customerListPanel').classList.remove('hidden');
+  }
   const { params, pageSize } = customerQueryParams();
   const data = await api('/api/customers?' + params.toString());
   customerTotal = data.total;
@@ -2365,6 +2369,10 @@ document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListen
   }
   if (btn.dataset.view === 'coupon-records') {
     loadCouponRecords(false);
+  }
+  if (btn.dataset.view === 'customers') {
+    showCustomerList({ keepScroll: false });
+    searchCustomers(false);
   }
 }));
 
