@@ -510,22 +510,30 @@ async function selectCustomer(wid) {
   }
   $('issueWid').value = wid;
   $('couponStatusFilter').value = '';
-  $('customerListPanel').classList.remove('hidden');
+  $('customerListPanel').classList.add('hidden');
   $('customerDetailPanel').classList.remove('hidden');
+  $('customerDetail').textContent = '正在加载客户详情...';
+  $('couponDetail').textContent = '请选择一个券查看详情';
+  $('customerCoupons').innerHTML = '<tr><td colspan="7" class="subtle">正在加载客户卡券...</td></tr>';
   if (openingFromList) scrollWindowTop();
-  const data = await api('/api/customers/' + encodeURIComponent(wid));
-  const c = data.customer;
-  selectedCustomerDetail = c;
-  if (!c.deleted_at) {
-    fillIssueCustomer(c);
+  try {
+    const data = await api('/api/customers/' + encodeURIComponent(wid));
+    const c = data.customer;
+    selectedCustomerDetail = c;
+    if (!c.deleted_at) {
+      fillIssueCustomer(c);
+    }
+    selectedCustomerCoupons = data.coupons;
+    selectedCustomerVehicles = data.vehicles || [];
+    addVehicleFormVisible = false;
+    cargeerVehicleOptions = [];
+    renderCustomerDetail(c);
+    $('couponDetail').textContent = '请选择一个券查看详情';
+    renderCustomerCoupons();
+  } catch (err) {
+    alert(err.message || '客户详情加载失败');
+    showCustomerList({ keepScroll: true });
   }
-  selectedCustomerCoupons = data.coupons;
-  selectedCustomerVehicles = data.vehicles || [];
-  addVehicleFormVisible = false;
-  cargeerVehicleOptions = [];
-  renderCustomerDetail(c);
-  $('couponDetail').textContent = '\u9009\u62e9\u4e00\u4e2a\u5238\u67e5\u770b\u8be6\u60c5';
-  renderCustomerCoupons();
 }
 
 function renderCustomerDetail(c) {
