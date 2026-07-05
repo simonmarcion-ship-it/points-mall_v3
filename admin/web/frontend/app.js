@@ -32,6 +32,8 @@ let registerSmsTimer = null;
 let lastRedeemStoreOptions = [];
 let logPage = 1;
 let logTotal = 0;
+let couponRecordPage = 1;
+let couponRecordTotal = 0;
 
 function scrollWindowTop() {
   requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
@@ -295,6 +297,10 @@ window.downloadLogs = downloadLogs;
 window.loadLogs = loadLogs;
 window.changeLogPage = changeLogPage;
 window.resetLogFilters = resetLogFilters;
+window.downloadCouponRecords = downloadCouponRecords;
+window.loadCouponRecords = loadCouponRecords;
+window.changeCouponRecordPage = changeCouponRecordPage;
+window.resetCouponRecordFilters = resetCouponRecordFilters;
 window.toggleTemplate = toggleTemplate;
 
 function formatDateTime(value) {
@@ -2250,6 +2256,72 @@ function downloadLogs() {
   window.location.href = ADMIN_BASE + '/api/logs/export?' + params.toString();
 }
 
+
+function couponRecordQueryParams() {
+  const pageSize = Number($('couponRecordPageSize')?.value || 50);
+  const params = new URLSearchParams({
+    page: String(couponRecordPage),
+    page_size: String(pageSize),
+  });
+  const from = $('couponRecordFrom')?.value || '';
+  const to = $('couponRecordTo')?.value || '';
+  if (from) params.set('from_date', from);
+  if (to) params.set('to_date', to);
+  return { params, pageSize };
+}
+
+async function loadCouponRecords(resetPage = false) {
+  if (resetPage) couponRecordPage = 1;
+  const { params, pageSize } = couponRecordQueryParams();
+  const data = await api('/api/coupon-records?' + params.toString());
+  couponRecordTotal = data.total || 0;
+  $('couponRecordRows').innerHTML = data.items.map((row) => `
+    <tr>
+      <td>${safe(row.code)}</td>
+      <td>${safe(row.template_name)}</td>
+      <td>${safe(row.coupon_type)}</td>
+      <td>${safe(row.customer_name)}</td>
+      <td>${safe(row.customer_phone)}</td>
+      <td>${safe(row.vin)}</td>
+      <td>${safe(row.issued_at || row.receive_time)}</td>
+      <td>${safe(row.issued_store_name)}</td>
+      <td>${safe(row.issued_by_name)}</td>
+      <td>${safe(row.usable_store_names)}</td>
+      <td>${safe(row.redeemed_store_name)}</td>
+      <td>${safe(row.redeemed_by_name)}</td>
+      <td>${safe(row.redeemed_at || row.used_time)}</td>
+    </tr>
+  `).join('');
+  const totalPages = Math.max(1, Math.ceil(couponRecordTotal / pageSize));
+  if ($('couponRecordPageInfo')) $('couponRecordPageInfo').textContent = `第 ${couponRecordPage} / ${totalPages} 页，共 ${couponRecordTotal} 条记录`;
+  if ($('couponRecordPrevPage')) $('couponRecordPrevPage').disabled = couponRecordPage <= 1;
+  if ($('couponRecordNextPage')) $('couponRecordNextPage').disabled = couponRecordPage >= totalPages;
+}
+
+async function changeCouponRecordPage(step) {
+  const pageSize = Number($('couponRecordPageSize')?.value || 50);
+  const totalPages = Math.max(1, Math.ceil(couponRecordTotal / pageSize));
+  couponRecordPage = Math.min(Math.max(1, couponRecordPage + step), totalPages);
+  await loadCouponRecords(false);
+}
+
+async function resetCouponRecordFilters() {
+  if ($('couponRecordFrom')) $('couponRecordFrom').value = '';
+  if ($('couponRecordTo')) $('couponRecordTo').value = '';
+  couponRecordPage = 1;
+  await loadCouponRecords(false);
+}
+
+function downloadCouponRecords() {
+  const from = $('couponRecordFrom')?.value || '';
+  const to = $('couponRecordTo')?.value || '';
+  if (!from || !to) {
+    alert('请选择核销开始日期和核销结束日期，再下载当前筛选结果');
+    return;
+  }
+  const params = new URLSearchParams({ from_date: from, to_date: to });
+  window.location.href = ADMIN_BASE + '/api/coupon-records/export?' + params.toString();
+}
 document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListener('click', () => {
   if (btn.classList.contains('hidden')) return;
   document.querySelectorAll('.sidebar button').forEach((item) => item.classList.remove('active'));
@@ -2260,6 +2332,9 @@ document.querySelectorAll('.sidebar button').forEach((btn) => btn.addEventListen
   if (btn.dataset.view === 'admin-users') loadAdminUsers();
   if (btn.dataset.view === 'logs') {
     loadLogs(false);
+  }
+  if (btn.dataset.view === 'coupon-records') {
+    loadCouponRecords(false);
   }
 }));
 

@@ -1705,8 +1705,7 @@ def customer_detail(wid: str, request: Request) -> dict:
                        ct.rule_text AS rule_text
                 FROM coupons cp
                 LEFT JOIN coupon_templates ct ON ct.id = cp.template_id
-                LEFT JOIN customer_vehicles v ON v.id = cp.vehicle_id
-                WHERE cp.customer_wid = ?
+                            WHERE cp.customer_wid = ?
                 ORDER BY cp.receive_time DESC, cp.code DESC
                 """,
                 (wid,),
@@ -2893,6 +2892,161 @@ def export_logs(request: Request, from_date: str = "", to_date: str = "") -> Fas
     )
 
 
+
+def coupon_record_where(from_date: str = "", to_date: str = "") -> tuple[str, list[str]]:
+    where_parts = ["cp.status = 'used'"]
+    params: list[str] = []
+    if from_date or to_date:
+        start_text, end_text = optional_log_date_range(from_date, to_date)
+        if start_text:
+            where_parts.append("COALESCE(cp.redeemed_at, cp.used_time) >= ?")
+            params.append(start_text)
+        if end_text:
+            where_parts.append("COALESCE(cp.redeemed_at, cp.used_time) <= ?")
+            params.append(end_text)
+    return "WHERE " + " AND ".join(where_parts), params
+
+
+def coupon_record_select(conn) -> str:
+    coupon_columns = {row[1] for row in conn.execute("PRAGMA table_info(coupons)").fetchall()}
+    customer_columns = {row[1] for row in conn.execute("PRAGMA table_info(customers)").fetchall()}
+    vin_parts = []
+    if "vin_snapshot" in coupon_columns:
+        vin_parts.append("NULLIF(cp.vin_snapshot, '')")
+    if "vin" in customer_columns:
+        vin_parts.append("c.vin")
+    if len(vin_parts) > 1:
+        vin_sql = "COALESCE(" + ", ".join(vin_parts) + ")"
+    elif vin_parts:
+        vin_sql = vin_parts[0]
+    else:
+        vin_sql = "''"
+    name_parts = []
+    if "real_name" in customer_columns:
+        name_parts.append("NULLIF(c.real_name, '')")
+    if "nickname" in customer_columns:
+        name_parts.append("NULLIF(c.nickname, '')")
+    name_parts.append("cp.customer_wid")
+    name_sql = "COALESCE(" + ", ".join(name_parts) + ")"
+    return f"""
+    SELECT
+        cp.code,
+        cp.template_name,
+        cp.coupon_type,
+        cp.customer_wid,
+        {name_sql} AS customer_name,
+        COALESCE(NULLIF(c.phone, ''), cp.phone) AS customer_phone,
+        {vin_sql} AS vin,
+        cp.receive_time,
+        cp.issued_at,
+        cp.issued_store_name,
+        cp.issued_by_name,
+        cp.usable_store_names,
+        cp.redeemed_store_name,
+        cp.redeemed_by_name,
+        cp.used_time,
+        cp.redeemed_at
+    FROM coupons cp
+    LEFT JOIN customers c ON c.wid = cp.customer_wid
+    """
+
+
+@app.get("/api/coupon-records")
+def coupon_records(
+    request: Request,
+    from_date: str = "",
+    to_date: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    require_role(request, {"admin", "super_admin"})
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    offset = (page - 1) * page_size
+    where_sql, params = coupon_record_where(from_date, to_date)
+    with db_session() as conn:
+        total = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM coupons cp
+            LEFT JOIN customers c ON c.wid = cp.customer_wid
+                    {where_sql}
+            """,
+            params,
+        ).fetchone()[0]
+        rows = rows_to_dicts(
+            conn.execute(
+                f"""
+                {coupon_record_select(conn)}
+                {where_sql}
+                ORDER BY COALESCE(cp.redeemed_at, cp.used_time) DESC, cp.code DESC
+                LIMIT ? OFFSET ?
+                """,
+                (*params, page_size, offset),
+            ).fetchall()
+        )
+    return {"items": rows, "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/api/coupon-records/export")
+def export_coupon_records(request: Request, from_date: str = "", to_date: str = "") -> FastAPIResponse:
+    require_role(request, {"admin", "super_admin"})
+    start_text, end_text = log_date_range(from_date, to_date)
+    where_sql, params = coupon_record_where(from_date, to_date)
+    with db_session() as conn:
+        rows = rows_to_dicts(
+            conn.execute(
+                f"""
+                {coupon_record_select(conn)}
+                {where_sql}
+                ORDER BY COALESCE(cp.redeemed_at, cp.used_time) ASC, cp.code ASC
+                """,
+                params,
+            ).fetchall()
+        )
+
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output)
+    writer.writerow([
+        "券码",
+        "卡券名称",
+        "卡券类型",
+        "客户WID",
+        "客户姓名",
+        "客户手机号",
+        "VIN",
+        "发券时间",
+        "发券门店",
+        "发券人",
+        "可使用门店",
+        "实际核销门店",
+        "核销人",
+        "核销时间",
+    ])
+    for row in rows:
+        writer.writerow([
+            row.get("code") or "",
+            row.get("template_name") or "",
+            row.get("coupon_type") or "",
+            row.get("customer_wid") or "",
+            row.get("customer_name") or "",
+            row.get("customer_phone") or "",
+            row.get("vin") or "",
+            row.get("issued_at") or row.get("receive_time") or "",
+            row.get("issued_store_name") or "",
+            row.get("issued_by_name") or "",
+            row.get("usable_store_names") or "",
+            row.get("redeemed_store_name") or "",
+            row.get("redeemed_by_name") or "",
+            row.get("redeemed_at") or row.get("used_time") or "",
+        ])
+    filename = f"coupon_records_{from_date}_{to_date}.csv"
+    return FastAPIResponse(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 @app.get("/api/wechat/js-sdk-config")
 def wechat_js_sdk_config(request: Request, url: str) -> dict:
     require_login(request)

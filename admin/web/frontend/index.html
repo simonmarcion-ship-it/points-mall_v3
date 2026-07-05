@@ -55,6 +55,7 @@
       <button data-view="redeem" data-permission="can_redeem">核销</button>
       <button data-view="templates">券模板</button>
       <button data-view="logs">操作记录</button>
+      <button data-view="coupon-records" data-permission="can_admin_users">卡券记录</button>
     </nav>
     <section class="content">
       <div class="stats" id="stats"></div>
@@ -333,6 +334,38 @@
           </div>
         </div>
       </section>
+      <section id="view-coupon-records" class="view hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">卡券记录</div>
+            <div class="toolbar compact">
+              <label>核销开始<input id="couponRecordFrom" type="date" onchange="loadCouponRecords(true)" /></label>
+              <label>核销结束<input id="couponRecordTo" type="date" onchange="loadCouponRecords(true)" /></label>
+              <select id="couponRecordPageSize" onchange="loadCouponRecords(true)">
+                <option value="20">20条/页</option>
+                <option value="50" selected>50条/页</option>
+                <option value="100">100条/页</option>
+                <option value="200">200条/页</option>
+              </select>
+              <button class="secondary" onclick="loadCouponRecords(true)">查询</button>
+              <button class="secondary" onclick="resetCouponRecordFilters()">重置</button>
+              <button class="secondary" onclick="downloadCouponRecords()">下载</button>
+              <button class="secondary" onclick="loadCouponRecords(false)">刷新</button>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead><tr><th>券码</th><th>卡券名称</th><th>卡券类型</th><th>客户</th><th>手机号</th><th>VIN</th><th>发券时间</th><th>发券门店</th><th>发券人</th><th>可使用门店</th><th>实际核销门店</th><th>核销人</th><th>核销时间</th></tr></thead>
+              <tbody id="couponRecordRows"></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <button class="secondary" id="couponRecordPrevPage" onclick="changeCouponRecordPage(-1)">上一页</button>
+            <span id="couponRecordPageInfo">第 1 / 1 页，共 0 条记录</span>
+            <button class="secondary" id="couponRecordNextPage" onclick="changeCouponRecordPage(1)">下一页</button>
+          </div>
+        </div>
+      </section>
     </section>
   </main>
   </div>
@@ -341,6 +374,6 @@
     <button type="button" class="danger" data-permission="can_void" onclick="confirmContextCouponVoid()">作废</button>
   </div>
   <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-  <script src="assets/app.js?v=20260609-customer-vehicles"></script>
+  <script src="assets/app.js?v=20260705-coupon-records"></script>
 </body>
 </html>
