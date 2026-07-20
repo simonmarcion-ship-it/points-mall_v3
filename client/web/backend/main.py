@@ -195,7 +195,7 @@ def get_customer_by_wid(conn, wid: str) -> dict | None:
                    available_point, total_point, customer_status, avatar_url,
                    real_name, car_series, vin, purchase_store_name, plate_no
             FROM customers
-            WHERE wid = ?
+            WHERE wid = ? AND deleted_at IS NULL
             """,
             (wid,),
         ).fetchone()
@@ -208,7 +208,7 @@ def get_customer_by_phone(conn, phone: str) -> dict | None:
             """
             SELECT *
             FROM customers
-            WHERE phone = ?
+            WHERE phone = ? AND deleted_at IS NULL
             ORDER BY became_customer_at DESC, wid DESC
             LIMIT 1
             """,
@@ -742,6 +742,7 @@ def wechat_callback(code: str = "", state: str = "") -> RedirectResponse:
                 set_client_session(response, customer["wid"])
                 clear_pending_wechat(response)
                 return response
+            clear_client_session(response)
 
     set_pending_wechat(response, identity)
     return response
