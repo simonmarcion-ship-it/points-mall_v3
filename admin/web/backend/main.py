@@ -143,6 +143,12 @@ class CustomerVehicleRequest(BaseModel):
     purchase_store_name: str = ""
 
 
+class TransferCustomerVehicleRequest(BaseModel):
+    target_customer_wid: str = ""
+    target_phone: str = ""
+    remark: str = ""
+
+
 class CreateTemplateRequest(BaseModel):
     name: str
     coupon_type: str = "通用券"
@@ -580,6 +586,78 @@ def require_customer_vehicle(conn, wid: str, vehicle_id: str) -> dict:
     if not vehicle:
         raise HTTPException(status_code=404, detail="\u8f66\u8f86\u4e0d\u5b58\u5728\u6216\u5df2\u5220\u9664")
     return vehicle
+
+
+def require_active_target_customer(conn, target_customer_wid: str = "", target_phone: str = "") -> dict:
+    cleaned_wid = (target_customer_wid or "").strip()
+    cleaned_phone = (target_phone or "").strip()
+    customer = None
+    if cleaned_wid:
+        customer = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM customers
+                WHERE wid = ? AND deleted_at IS NULL
+                """,
+                (cleaned_wid,),
+            ).fetchone()
+        )
+    elif cleaned_phone:
+        customer = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM customers
+                WHERE phone = ? AND deleted_at IS NULL
+                ORDER BY became_customer_at DESC, wid DESC
+                LIMIT 1
+                """,
+                (cleaned_phone,),
+            ).fetchone()
+        )
+    if not customer:
+        raise HTTPException(status_code=404, detail="\u672a\u627e\u5230\u53ef\u7528\u7684\u76ee\u6807\u5ba2\u6237")
+    return customer
+
+
+def ensure_target_customer_can_receive_vehicle(conn, target_wid: str, vin: str, plate_no: str, exclude_vehicle_id: str = "") -> None:
+    cleaned_vin = normalize_vin(vin)
+    cleaned_plate_no = (plate_no or "").strip()
+    if cleaned_vin:
+        existing = row_to_dict(
+            conn.execute(
+                """
+                SELECT id
+                FROM customer_vehicles
+                WHERE customer_wid = ?
+                  AND deleted_at IS NULL
+                  AND id != ?
+                  AND UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(vin, '')), ' ', ''), char(9), ''), char(12288), '')) = ?
+                LIMIT 1
+                """,
+                (target_wid, exclude_vehicle_id, cleaned_vin),
+            ).fetchone()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="\u76ee\u6807\u5ba2\u6237\u5df2\u6709\u76f8\u540c VIN \u7684\u8f66\u8f86\uff0c\u4e0d\u80fd\u91cd\u590d\u8fc1\u79fb")
+    if cleaned_plate_no:
+        existing = row_to_dict(
+            conn.execute(
+                """
+                SELECT id
+                FROM customer_vehicles
+                WHERE customer_wid = ?
+                  AND deleted_at IS NULL
+                  AND id != ?
+                  AND TRIM(COALESCE(plate_no, '')) = ?
+                LIMIT 1
+                """,
+                (target_wid, exclude_vehicle_id, cleaned_plate_no),
+            ).fetchone()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="\u76ee\u6807\u5ba2\u6237\u5df2\u6709\u76f8\u540c\u8f66\u724c\u53f7\u7684\u8f66\u8f86\uff0c\u4e0d\u80fd\u91cd\u590d\u8fc1\u79fb")
 
 
 def ensure_vehicle_unique_for_update(conn, wid: str, vehicle_id: str, vin: str, plate_no: str) -> None:
@@ -1959,6 +2037,120 @@ def delete_customer_vehicle(wid: str, vehicle_id: str, request: Request) -> dict
         payload = customer_payload_with_vehicles(conn, wid)
         payload["deleted_vehicle_id"] = vehicle_id
         return payload
+
+
+@app.post("/api/customers/{wid}/vehicles/{vehicle_id}/transfer")
+def transfer_customer_vehicle(wid: str, vehicle_id: str, req: TransferCustomerVehicleRequest, request: Request) -> dict:
+    operator = require_role(request, {"admin", "super_admin"})
+    target_customer_wid = (req.target_customer_wid or "").strip()
+    target_phone = (req.target_phone or "").strip()
+    if not target_customer_wid and not target_phone:
+        raise HTTPException(status_code=400, detail="\u8bf7\u8f93\u5165\u76ee\u6807\u5ba2\u6237 wid \u6216\u624b\u673a\u53f7")
+
+    with db_session() as conn:
+        source_customer = require_customer(conn, wid)
+        vehicle = require_customer_vehicle(conn, wid, vehicle_id)
+        target_customer = require_active_target_customer(conn, target_customer_wid, target_phone)
+        if target_customer["wid"] == source_customer["wid"]:
+            raise HTTPException(status_code=400, detail="\u4e0d\u80fd\u8fc1\u79fb\u5230\u539f\u5ba2\u6237")
+
+        ensure_target_customer_can_receive_vehicle(
+            conn,
+            target_customer["wid"],
+            vehicle.get("vin") or "",
+            vehicle.get("plate_no") or "",
+            exclude_vehicle_id=vehicle_id,
+        )
+
+        target_has_vehicle = row_to_dict(
+            conn.execute(
+                """
+                SELECT id
+                FROM customer_vehicles
+                WHERE customer_wid = ? AND deleted_at IS NULL
+                ORDER BY is_primary DESC, sort_order ASC, created_at ASC, id ASC
+                LIMIT 1
+                """,
+                (target_customer["wid"],),
+            ).fetchone()
+        )
+        target_sort_order = 1
+        if target_has_vehicle:
+            target_sort_order = (
+                conn.execute(
+                    """
+                    SELECT COALESCE(MAX(sort_order), 0) + 1
+                    FROM customer_vehicles
+                    WHERE customer_wid = ? AND deleted_at IS NULL
+                    """,
+                    (target_customer["wid"],),
+                ).fetchone()[0]
+                or 1
+            )
+
+        was_primary = int(vehicle.get("is_primary") or 0)
+        now = now_text()
+        conn.execute(
+            """
+            UPDATE customer_vehicles
+            SET customer_wid = ?, phone_snapshot = ?, is_primary = ?, sort_order = ?, updated_at = ?, deleted_by = NULL, deleted_reason = NULL
+            WHERE id = ? AND customer_wid = ? AND deleted_at IS NULL
+            """,
+            (
+                target_customer["wid"],
+                target_customer.get("phone") or "",
+                1 if not target_has_vehicle else 0,
+                target_sort_order,
+                now,
+                vehicle_id,
+                wid,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE coupons
+            SET customer_wid = ?
+            WHERE vehicle_id = ?
+              AND COALESCE(customer_wid, '') = ?
+            """,
+            (target_customer["wid"], vehicle_id, wid),
+        )
+        if was_primary:
+            next_source_vehicle = row_to_dict(
+                conn.execute(
+                    """
+                    SELECT id
+                    FROM customer_vehicles
+                    WHERE customer_wid = ? AND deleted_at IS NULL
+                    ORDER BY sort_order ASC, created_at ASC, id ASC
+                    LIMIT 1
+                    """,
+                    (wid,),
+                ).fetchone()
+            )
+            if next_source_vehicle:
+                conn.execute(
+                    "UPDATE customer_vehicles SET is_primary = 1, updated_at = ? WHERE id = ?",
+                    (now_text(), next_source_vehicle["id"]),
+                )
+
+        conn.execute(
+            """
+            INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
+            VALUES (?, ?, '\u8f66\u8f86\u8fc1\u79fb', ?, ?, 1, ?)
+            """,
+            (
+                now,
+                operator,
+                wid,
+                f"{vehicle.get('vin') or vehicle.get('plate_no') or vehicle_id} -> {target_customer.get('phone') or target_customer['wid']}",
+                req.remark.strip() or "\u540e\u53f0\u8f66\u8f86\u8fc1\u79fb",
+            ),
+        )
+        source_payload = customer_payload_with_vehicles(conn, wid)
+        source_payload["target_customer"] = customer_payload_with_vehicles(conn, target_customer["wid"])
+        source_payload["transferred_vehicle_id"] = vehicle_id
+        return source_payload
 
 
 @app.delete("/api/customers/{wid}")

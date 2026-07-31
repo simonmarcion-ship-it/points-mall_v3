@@ -545,6 +545,7 @@ function renderCustomerDetail(c) {
       const actionHtml = canManageVehicles ? `
         <div class="vehicle-card-actions">
           <button type="button" class="secondary" onclick="window.startEditVehicle('${html(v.id)}')">&#32534;&#36753;</button>
+          <button type="button" class="secondary" onclick="window.transferCustomerVehicle('${html(v.id)}')">&#36716;&#31227;</button>
           <button type="button" class="danger" onclick="window.deleteCustomerVehicle('${html(v.id)}')">&#21024;&#38500;</button>
         </div>
       ` : '';
@@ -865,10 +866,36 @@ async function deleteCustomerVehicle(vehicleId) {
   }
 }
 
+async function transferCustomerVehicle(vehicleId) {
+  const detailWid = currentDetailWid();
+  if (!detailWid || !vehicleId) return;
+  const target = window.prompt('请输入目标客户手机号或客户编号');
+  if (!target) return;
+  const remark = window.prompt('请输入迁移备注（可选）') || '';
+  try {
+    const data = await api('/api/customers/' + encodeURIComponent(detailWid) + '/vehicles/' + encodeURIComponent(vehicleId) + '/transfer', {
+      method: 'POST',
+      body: JSON.stringify({
+        target_phone: /^\d{6,}$/.test(target) ? target : '',
+        target_customer_wid: /^\d{6,}$/.test(target) ? '' : target,
+        remark,
+      }),
+    });
+    selectedCustomerDetail = data.customer;
+    selectedCustomerVehicles = data.vehicles || [];
+    renderCustomerDetail(data.customer);
+    setVehicleMessage('车辆已迁移', true);
+  } catch (err) {
+    setVehicleMessage(err.message, false);
+    alert(err.message);
+  }
+}
+
 window.startEditVehicle = startEditVehicle;
 window.cancelEditVehicle = cancelEditVehicle;
 window.saveVehicleEdit = saveVehicleEdit;
 window.deleteCustomerVehicle = deleteCustomerVehicle;
+window.transferCustomerVehicle = transferCustomerVehicle;
 window.toggleAddVehicleForm = toggleAddVehicleForm;
 window.queryCustomerVehiclesFromCargeer = queryCustomerVehiclesFromCargeer;
 window.addCargeerVehicle = addCargeerVehicle;
