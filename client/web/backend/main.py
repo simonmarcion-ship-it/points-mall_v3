@@ -68,7 +68,6 @@ def public_coupon_row(coupon: dict) -> dict:
         "valid_period": coupon.get("valid_period"),
         "valid_start": coupon.get("valid_start"),
         "valid_end": coupon.get("valid_end"),
-        "remark": coupon.get("remark"),
         "vehicle_id": coupon.get("vehicle_id"),
         "vin_snapshot": coupon.get("vin_snapshot"),
     }
@@ -102,7 +101,7 @@ def public_coupon_detail(coupon: dict, template: dict | None) -> dict:
             "usable_store_names": coupon.get("usable_store_names") or "",
             "validity_text": validity_text,
             "product_scope_text": validity_text,
-            "discount_text": raw.get("优惠说明") or coupon.get("remark") or "",
+            "discount_text": raw.get("优惠说明") or "",
             "template_id": coupon.get("template_id"),
         }
     )
