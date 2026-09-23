@@ -128,7 +128,7 @@ async function openCouponDetail(code) {
     const data = await api(`/api/client/coupons/${encodeURIComponent(code)}`);
     const coupon = data.coupon;
     $("detailStatus").textContent = statusText(coupon.status, coupon.status_text);
-    $("detailDiscount").textContent = safe(coupon.discount_text || "无使用门槛");
+    $("detailDiscount").textContent = safe(coupon.discount_text || "");
     $("detailName").textContent = safe(coupon.template_name);
     $("detailPeriod").textContent = safe(coupon.valid_period || [coupon.valid_start, coupon.valid_end].filter(Boolean).join(" 至 "));
     $("detailCode").textContent = safe(coupon.code).replace(/(.{4})/g, "$1 ").trim();
