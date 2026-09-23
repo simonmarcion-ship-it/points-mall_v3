@@ -94,6 +94,8 @@ def public_coupon_detail(coupon: dict, template: dict | None) -> dict:
     validity_text = coupon.get("valid_period") or " 至 ".join(
         str(value) for value in (coupon.get("valid_start"), coupon.get("valid_end")) if value
     )
+    # Manual issue remarks are for staff records only, not customer-facing text.
+    is_manual_coupon = str(coupon.get("source") or "").strip().lower() == "manual"
     detail.update(
         {
             "rule_text": raw.get("使用规则") or (template or {}).get("rule_text") or "",
@@ -101,7 +103,7 @@ def public_coupon_detail(coupon: dict, template: dict | None) -> dict:
             "usable_store_names": coupon.get("usable_store_names") or "",
             "validity_text": validity_text,
             "product_scope_text": validity_text,
-            "discount_text": raw.get("优惠说明") or "",
+            "discount_text": "" if is_manual_coupon else (raw.get("优惠说明") or ""),
             "template_id": coupon.get("template_id"),
         }
     )

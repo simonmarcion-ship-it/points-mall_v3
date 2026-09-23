@@ -2801,7 +2801,6 @@ def issue_coupon(req: IssueCouponRequest, request: Request) -> dict:
                 "raw_json": json.dumps(
                     {
                         "source": "manual",
-                        "优惠说明": req.remark,
                         "使用规则": template.get("rule_text") or "",
                         "使用门店": join_text(usable_store_names),
                     },
