@@ -77,6 +77,18 @@ class VoidCouponRequest(BaseModel):
     remark: str = ""
 
 
+class PreviewCouponTransferRequest(BaseModel):
+    code: str
+    source_customer_wid: str
+    target_phone: str
+
+
+class TransferCouponRequest(PreviewCouponTransferRequest):
+    target_customer_wid: str
+    target_vehicle_id: str
+    remark: str
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -914,6 +926,7 @@ def role_permissions(role: str) -> dict:
         "can_create_customer": is_admin or role == "issuer",
         "can_edit_customer": is_admin or role == "issuer",
         "can_void": is_admin or role == "issuer",
+        "can_transfer_coupon": is_admin,
         "can_redeem": is_admin or role == "redeemer",
         "can_manage_templates": is_admin,
         "can_manage_stores": is_admin,
@@ -2934,6 +2947,102 @@ def coupon_preview(code: str, request: Request) -> dict:
             "redeem_message": message,
             "message": message if coupon.get("status") == "unused" else f"该券当前不可核销: {coupon.get('status_text')}",
         }
+
+
+def coupon_transfer_context(conn, req: PreviewCouponTransferRequest) -> dict:
+    coupon = row_to_dict(conn.execute("SELECT * FROM coupons WHERE code = ?", (req.code.strip(),)).fetchone())
+    if not coupon:
+        raise HTTPException(status_code=404, detail="券码不存在")
+    if coupon["customer_wid"] != req.source_customer_wid.strip():
+        raise HTTPException(status_code=409, detail="优惠券归属已变化，请刷新客户详情后重试")
+    coupon = apply_dynamic_coupon_status(coupon)
+    if coupon["status"] != "unused" or coupon.get("used_time") or coupon.get("redeemed_at") or coupon.get("voided_at"):
+        raise HTTPException(status_code=400, detail="只能转移未使用且未过期的优惠券")
+    source_customer = require_customer(conn, coupon["customer_wid"])
+    source_vehicle = require_customer_vehicle(conn, coupon["customer_wid"], coupon.get("vehicle_id") or "")
+    target_phone = req.target_phone.strip()
+    if not re.fullmatch(r"1[3-9]\d{9}", target_phone):
+        raise HTTPException(status_code=400, detail="请输入正确的目标手机号")
+    targets = rows_to_dicts(conn.execute(
+        "SELECT * FROM customers WHERE phone = ? AND deleted_at IS NULL", (target_phone,),
+    ).fetchall())
+    if len(targets) != 1:
+        raise HTTPException(status_code=400, detail="目标手机号必须对应唯一的有效客户，请先核对客户资料")
+    target_customer = targets[0]
+    if target_customer["wid"] == source_customer["wid"]:
+        raise HTTPException(status_code=400, detail="不能转移到原客户")
+
+    source_vin = normalize_vin(source_vehicle.get("vin") or "")
+    snapshot_vin = normalize_vin(coupon.get("vin_snapshot") or "")
+    if VIN_PATTERN.fullmatch(snapshot_vin) and VIN_PATTERN.fullmatch(source_vin) and snapshot_vin != source_vin:
+        raise HTTPException(status_code=400, detail="优惠券 VIN 与关联车辆不一致，请先核对车辆资料")
+    source_vin = snapshot_vin if VIN_PATTERN.fullmatch(snapshot_vin) else source_vin or snapshot_vin
+    source_plate = (source_vehicle.get("plate_no") or "").strip().upper()
+    matches = []
+    for vehicle in customer_vehicle_rows(conn, target_customer["wid"]):
+        target_vin = normalize_vin(vehicle.get("vin") or "")
+        # 车牌可能更换归属；双方都有有效 VIN 时，不能仅凭同车牌跨车辆转券。
+        if VIN_PATTERN.fullmatch(source_vin) and VIN_PATTERN.fullmatch(target_vin) and source_vin != target_vin:
+            continue
+        same_vin = bool(source_vin and target_vin == source_vin)
+        same_plate = bool(source_plate and (vehicle.get("plate_no") or "").strip().upper() == source_plate)
+        if same_vin or same_plate:
+            matches.append(vehicle)
+    if len(matches) != 1:
+        raise HTTPException(status_code=400, detail="目标客户下必须有唯一的同 VIN 或同车牌车辆，且有效 VIN 不能冲突，请先核对车辆资料")
+
+    def customer_info(customer: dict) -> dict:
+        return {key: customer.get(key) for key in ("wid", "phone", "real_name", "nickname")}
+
+    def vehicle_info(vehicle: dict) -> dict:
+        return {key: vehicle.get(key) for key in ("id", "vin", "plate_no", "car_series")}
+
+    return {
+        "coupon": {key: coupon.get(key) for key in ("code", "template_name", "status", "valid_period", "valid_end")},
+        "source_customer": customer_info(source_customer),
+        "source_vehicle": vehicle_info(source_vehicle),
+        "target_customer": customer_info(target_customer),
+        "target_vehicle": vehicle_info(matches[0]),
+    }
+
+
+@app.post("/api/coupons/transfer-preview")
+def preview_coupon_transfer(req: PreviewCouponTransferRequest, request: Request) -> dict:
+    require_role(request, {"admin", "super_admin"})
+    with db_session() as conn:
+        return coupon_transfer_context(conn, req)
+
+
+@app.post("/api/coupons/transfer")
+def transfer_coupon(req: TransferCouponRequest, request: Request) -> dict:
+    operator = require_role(request, {"admin", "super_admin"})
+    if not req.remark.strip():
+        raise HTTPException(status_code=400, detail="请输入转移原因")
+    with db_session() as conn:
+        # 锁定后重新核对归属和状态，避免预览期间被核销或被其他管理员转走。
+        conn.execute("BEGIN IMMEDIATE")
+        context = coupon_transfer_context(conn, req)
+        if (context["target_customer"]["wid"] != req.target_customer_wid
+                or context["target_vehicle"]["id"] != req.target_vehicle_id):
+            raise HTTPException(status_code=409, detail="目标客户或车辆已变化，请重新预览后确认")
+        conn.execute(
+            "UPDATE coupons SET customer_wid = ?, phone = ?, vehicle_id = ? WHERE code = ? AND customer_wid = ?",
+            (req.target_customer_wid, context["target_customer"]["phone"], req.target_vehicle_id,
+             req.code.strip(), req.source_customer_wid.strip()),
+        )
+        audit = {
+            "reason": req.remark.strip(),
+            "source_customer": context["source_customer"],
+            "source_vehicle": context["source_vehicle"],
+            "target_customer": context["target_customer"],
+            "target_vehicle": context["target_vehicle"],
+        }
+        conn.execute(
+            """INSERT INTO operation_logs (created_at, operator, action, customer_wid, target, quantity, remark)
+               VALUES (?, ?, '优惠券转移', ?, ?, 1, ?)""",
+            (now_text(), operator, req.source_customer_wid.strip(), req.code.strip(), json.dumps(audit, ensure_ascii=False)),
+        )
+        return {"ok": True, **context}
 
 
 @app.post("/api/coupons/void")

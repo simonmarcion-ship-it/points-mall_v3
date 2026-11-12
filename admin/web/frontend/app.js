@@ -1035,6 +1035,8 @@ function showCouponDetail(index) {
   const usableStore = coupon.usable_store_names || rawJsonValue(coupon, '\u4f7f\u7528\u95e8\u5e97') || '';
   const discountText = rawJsonValue(coupon, '\u4f18\u60e0\u8bf4\u660e') || coupon.remark || '';
   $('couponDetail').innerHTML = `
+    ${can('can_transfer_coupon') && status === 'unused' && !selectedCustomerDetail?.deleted_at
+      ? `<p><button type="button" class="secondary" onclick="transferCustomerCoupon(${index})">转移优惠券</button></p>` : ''}
     <div class="kv coupon-detail-grid">
       <div class="key">\u5238\u7801</div><div>${safe(coupon.code)}</div>
       <div class="key">\u540d\u79f0</div><div>${safe(coupon.template_name)}</div>
@@ -1074,6 +1076,71 @@ function openCouponContextMenu(event, index) {
 function closeCouponContextMenu() {
   $('couponContextMenu').classList.add('hidden');
   contextCouponIndex = null;
+}
+
+async function confirmContextCouponTransfer() {
+  const index = contextCouponIndex;
+  closeCouponContextMenu();
+  await transferCustomerCoupon(index);
+}
+
+async function transferCustomerCoupon(index) {
+  const coupon = selectedCustomerCoupons[index];
+  const sourceWid = selectedWid;
+  if (!coupon || !sourceWid || !can('can_transfer_coupon')) return;
+  if (normalizeCouponStatus(coupon) !== 'unused') {
+    alert('只能转移未使用且未过期的优惠券');
+    return;
+  }
+  const phoneInput = prompt(`转移优惠券：${safe(coupon.template_name)}\n券码：${coupon.code}\n\n请输入目标客户手机号（目标客户须已有同一车辆）：`);
+  if (phoneInput === null) return;
+  const targetPhone = phoneInput.trim();
+  if (!/^1[3-9]\d{9}$/.test(targetPhone)) {
+    alert('请输入正确的目标手机号');
+    return;
+  }
+  try {
+    const transfer = { code: coupon.code, source_customer_wid: sourceWid, target_phone: targetPhone };
+    const preview = await api('/api/coupons/transfer-preview', {
+      method: 'POST', body: JSON.stringify(transfer),
+    });
+    const customerName = (customer) => customer.real_name || customer.nickname || '-';
+    const vehicleText = (vehicle) => `${vehicle.plate_no || '-'} / VIN：${vehicle.vin || '-'}`;
+    const confirmed = confirm([
+      '请核对本次转移：',
+      `券码：${preview.coupon.code}`,
+      `名称：${preview.coupon.template_name}`,
+      `有效期：${preview.coupon.valid_period || preview.coupon.valid_end || '-'}`,
+      `原客户：${preview.source_customer.phone}（${customerName(preview.source_customer)}）`,
+      `原车辆：${vehicleText(preview.source_vehicle)}`,
+      `目标客户：${preview.target_customer.phone}（${customerName(preview.target_customer)}）`,
+      `目标车辆：${vehicleText(preview.target_vehicle)}`,
+      '',
+      '确认后，原客户将看不到这张券，目标客户可在已有车辆下查看。',
+      '券码、有效期和使用范围保持不变。',
+    ].join('\n'));
+    if (!confirmed) return;
+    const reason = prompt('请输入转移原因：');
+    if (reason === null) return;
+    if (!reason.trim()) {
+      alert('请输入转移原因');
+      return;
+    }
+    await api('/api/coupons/transfer', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...transfer,
+        target_customer_wid: preview.target_customer.wid,
+        target_vehicle_id: preview.target_vehicle.id,
+        remark: reason.trim(),
+      }),
+    });
+    if (selectedWid === sourceWid) await selectCustomer(sourceWid);
+    await loadSummary();
+    alert(`优惠券已转移至 ${preview.target_customer.phone}。目标客户刷新个人中心后可查看。`);
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 async function confirmContextCouponRedeem() {
